@@ -49,9 +49,10 @@ func NewSender(config SenderConfig) (*Sender, error) {
 	if config.Signer == nil {
 		return nil, NewError(CodeInvalidConfiguration, "signer is required", nil)
 	}
+	networkPolicy := config.NetworkPolicy.Clone()
 	client := config.UnsafeHTTPClient
 	if client == nil {
-		client = transport.NewClient(config.NetworkPolicy)
+		client = transport.NewClient(networkPolicy)
 	} else if client.CheckRedirect == nil {
 		// Clone the client value so the caller's object is not mutated.
 		clone := *client
@@ -85,7 +86,7 @@ func NewSender(config SenderConfig) (*Sender, error) {
 		classifier:    classifier,
 		maxResponse:   config.MaxResponseBytes,
 		userAgent:     config.UserAgent,
-		networkPolicy: config.NetworkPolicy,
+		networkPolicy: networkPolicy,
 	}, nil
 }
 

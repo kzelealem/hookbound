@@ -74,12 +74,19 @@ func (p Policy) normalized() Policy {
 	if p.Resolver == nil {
 		p.Resolver = net.DefaultResolver
 	}
-	if !p.AllowAnyPort && p.AllowedPorts == nil {
-		p.AllowedPorts = make(map[uint16]struct{}, len(defaults.AllowedPorts))
-		for port := range defaults.AllowedPorts {
+	if p.AllowAnyPort {
+		p.AllowedPorts = nil
+	} else {
+		ports := p.AllowedPorts
+		if len(ports) == 0 {
+			ports = defaults.AllowedPorts
+		}
+		p.AllowedPorts = make(map[uint16]struct{}, len(ports))
+		for port := range ports {
 			p.AllowedPorts[port] = struct{}{}
 		}
 	}
+	p.AllowedCIDRs = append([]netip.Prefix(nil), p.AllowedCIDRs...)
 	if p.DialTimeout <= 0 {
 		p.DialTimeout = defaults.DialTimeout
 	}
@@ -100,16 +107,25 @@ func (p Policy) normalized() Policy {
 	}
 	if p.Dialer == nil {
 		p.Dialer = &net.Dialer{Timeout: p.DialTimeout, KeepAlive: 30 * time.Second}
+	} else {
+		dialer := *p.Dialer
+		p.Dialer = &dialer
 	}
 	if p.TLSConfig == nil {
 		p.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	} else {
 		p.TLSConfig = p.TLSConfig.Clone()
-		if p.TLSConfig.MinVersion == 0 {
+		if p.TLSConfig.MinVersion < tls.VersionTLS12 {
 			p.TLSConfig.MinVersion = tls.VersionTLS12
 		}
 	}
 	return p
+}
+
+// Clone returns an immutable policy snapshot with secure defaults applied.
+// Mutable maps, slices, dialers, and TLS configuration are copied.
+func (p Policy) Clone() Policy {
+	return p.normalized()
 }
 
 // ValidateURL performs syntax, scheme, credential, and port checks. Network
@@ -139,7 +155,7 @@ func ValidateURL(rawURL string, policy Policy) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(policy.AllowedPorts) > 0 {
+	if !policy.AllowAnyPort {
 		if _, allowed := policy.AllowedPorts[port]; !allowed {
 			return nil, fmt.Errorf("%w: port %d is not allowed", ErrUnsafeDestination, port)
 		}
