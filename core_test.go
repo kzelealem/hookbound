@@ -162,3 +162,17 @@ func TestCryptoJitterHandlesMaximumDuration(t *testing.T) {
 		t.Fatalf("maximum jitter became negative: %s", got)
 	}
 }
+
+func TestSendRequestRejectsInvalidHeadersBeforePersistenceOrSend(t *testing.T) {
+	tests := []http.Header{
+		{"Bad Header": {"value"}},
+		{"X-Test": {"value\r\ninjected: true"}},
+		{"Content-Length": {"1"}},
+	}
+	for _, headers := range tests {
+		err := (SendRequest{URL: "https://example.com", EventType: "test.event", Headers: headers}).Validate()
+		if ErrorCode(err) != CodeInvalidMessage {
+			t.Fatalf("expected invalid message for %#v, got %v", headers, err)
+		}
+	}
+}

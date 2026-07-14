@@ -85,7 +85,47 @@ func (r SendRequest) Validate() error {
 	if strings.TrimSpace(r.URL) == "" {
 		return NewError(CodeInvalidURL, "destination URL is required", nil)
 	}
+	if strings.ContainsAny(r.ContentType, "\r\n\x00") {
+		return NewError(CodeInvalidMessage, "content type contains forbidden characters", nil)
+	}
+	return validateHeaders(r.Headers)
+}
+
+func validateHeaders(headers http.Header) error {
+	for name, values := range headers {
+		if !validHeaderName(name) {
+			return NewError(CodeInvalidMessage, "invalid HTTP header name", nil)
+		}
+		switch strings.ToLower(name) {
+		case "host", "content-length", "connection", "transfer-encoding":
+			return NewError(CodeInvalidMessage, "HTTP header cannot be set by webhook payload", nil)
+		}
+		for _, value := range values {
+			for index := 0; index < len(value); index++ {
+				character := value[index]
+				if character == '\t' || character >= 0x20 && character != 0x7f {
+					continue
+				}
+				return NewError(CodeInvalidMessage, "HTTP header value contains forbidden characters", nil)
+			}
+		}
+	}
 	return nil
+}
+
+func validHeaderName(name string) bool {
+	if name == "" || strings.TrimSpace(name) != name {
+		return false
+	}
+	for index := 0; index < len(name); index++ {
+		character := name[index]
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // JSONBody serializes a value once and returns the exact bytes to store, sign,

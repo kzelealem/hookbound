@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/hookbound/hookbound/transport"
@@ -178,20 +176,13 @@ func (s *Sender) Send(ctx context.Context, request SendRequest) (AttemptResult, 
 }
 
 func copyHeaders(destination, source http.Header) error {
+	if err := validateHeaders(source); err != nil {
+		return err
+	}
 	for name, values := range source {
-		canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
-		if canonical == "" || strings.ContainsAny(canonical, "\r\n") {
-			return NewError(CodeInvalidMessage, "invalid HTTP header name", nil)
-		}
-		switch strings.ToLower(canonical) {
-		case "host", "content-length", "connection", "transfer-encoding":
-			return NewError(CodeInvalidMessage, fmt.Sprintf("header %s cannot be set by webhook payload", canonical), nil)
-		}
+		canonical := http.CanonicalHeaderKey(name)
 		destination.Del(canonical)
 		for _, value := range values {
-			if strings.ContainsAny(value, "\r\n\x00") {
-				return NewError(CodeInvalidMessage, fmt.Sprintf("header %s contains forbidden characters", canonical), nil)
-			}
 			destination.Add(canonical, value)
 		}
 	}
