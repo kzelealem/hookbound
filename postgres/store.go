@@ -8,6 +8,8 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -79,6 +81,9 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, request hookbound.Sen
 	if err := request.Validate(); err != nil {
 		return Publication{}, err
 	}
+	if containsSensitiveHeaders(request.Headers) {
+		return Publication{}, hookbound.NewError(hookbound.CodeInvalidConfiguration, "durable deliveries cannot persist authorization or cookie headers; configure a runtime authenticator", nil)
+	}
 	if request.ID == "" {
 		id, err := s.newMessageID()
 		if err != nil {
@@ -137,7 +142,7 @@ func (s *Store) Handle(ctx context.Context, message hookbound.VerifiedMessage) e
 	if err := message.Validate(); err != nil {
 		return err
 	}
-	headers, err := json.Marshal(message.Headers)
+	headers, err := json.Marshal(redactedHeaders(message.Headers))
 	if err != nil {
 		return hookbound.NewError(hookbound.CodeInvalidMessage, "encode receipt headers", err)
 	}
@@ -146,7 +151,7 @@ func (s *Store) Handle(ctx context.Context, message hookbound.VerifiedMessage) e
 		return hookbound.NewError(hookbound.CodeInvalidMessage, "encode receipt metadata", err)
 	}
 	now := s.now()
-	_, err = s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO hookbound_receipts
 			(source, message_id, event_type, event_timestamp, body, content_type, headers, metadata,
 			 state, next_attempt_at, received_at, updated_at)
@@ -156,6 +161,23 @@ func (s *Store) Handle(ctx context.Context, message hookbound.VerifiedMessage) e
 		headers, metadata, now)
 	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "persist webhook receipt", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return hookbound.NewError(hookbound.CodePersistence, "inspect webhook receipt insert", err)
+	}
+	if rows == 0 {
+		var eventType, contentType string
+		var body []byte
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT event_type, body, content_type FROM hookbound_receipts
+			WHERE source = $1 AND message_id = $2`, message.Source, message.ID).
+			Scan(&eventType, &body, &contentType); err != nil {
+			return hookbound.NewError(hookbound.CodePersistence, "read existing webhook receipt", err)
+		}
+		if eventType != message.Type || contentType != message.ContentType || !bytes.Equal(body, message.Body) {
+			return hookbound.NewError(hookbound.CodeConflict, "receipt ID already exists with different immutable content", nil)
+		}
 	}
 	return nil
 }
@@ -172,8 +194,10 @@ func (s *Store) ClaimDelivery(ctx context.Context, lease time.Duration) (*Claime
 	now := s.now()
 	claimed := &ClaimedDelivery{}
 	var headersJSON []byte
+	var previousState DeliveryState
+	var previousAttempt int
 	err = tx.QueryRowContext(ctx, `
-		SELECT d.id, d.attempt_count + 1, m.id, d.destination_url, m.event_type, m.body, m.content_type, d.headers
+		SELECT d.id, d.state, d.attempt_count, d.attempt_count + 1, m.id, d.destination_url, m.event_type, m.body, m.content_type, d.headers
 		FROM hookbound_deliveries d
 		JOIN hookbound_messages m ON m.id = d.message_id
 		WHERE
@@ -182,7 +206,7 @@ func (s *Store) ClaimDelivery(ctx context.Context, lease time.Duration) (*Claime
 		ORDER BY d.next_attempt_at, d.created_at
 		FOR UPDATE OF d SKIP LOCKED
 		LIMIT 1`, now).Scan(
-		&claimed.DeliveryID, &claimed.Attempt, &claimed.MessageID, &claimed.Destination,
+		&claimed.DeliveryID, &previousState, &previousAttempt, &claimed.Attempt, &claimed.MessageID, &claimed.Destination,
 		&claimed.EventType, &claimed.Body, &claimed.ContentType, &headersJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -192,6 +216,16 @@ func (s *Store) ClaimDelivery(ctx context.Context, lease time.Duration) (*Claime
 	}
 	if err := json.Unmarshal(headersJSON, &claimed.Headers); err != nil {
 		return nil, hookbound.NewError(hookbound.CodePersistence, "decode delivery headers", err)
+	}
+	if previousState == DeliveryInFlight && previousAttempt > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE hookbound_attempts
+			SET finished_at = $1, outcome = 'retry', error_code = 'lease_expired',
+				error_detail = 'worker lease expired before completion'
+			WHERE delivery_id = $2 AND attempt_number = $3 AND finished_at IS NULL`,
+			now, claimed.DeliveryID, previousAttempt); err != nil {
+			return nil, hookbound.NewError(hookbound.CodePersistence, "expire abandoned webhook attempt", err)
+		}
 	}
 	claimed.AttemptID, err = randomOpaqueID("att_")
 	if err != nil {
@@ -220,6 +254,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 		return hookbound.NewError(hookbound.CodeInvalidConfiguration, "claimed delivery is required", nil)
 	}
 	now := s.now()
+	result.Outcome = normalizedOutcome(result.Outcome, sendErr)
 	state, nextAttempt := deliveryTransition(now, claimed.Attempt, result, sendErr, retry)
 	responseHeaders, err := json.Marshal(result.ResponseHeader)
 	if err != nil {
@@ -249,15 +284,23 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 	if state == DeliveryDelivered || state == DeliveryPermanentFailure || state == DeliveryDisabled || state == DeliveryExhausted {
 		completedAt = now
 	}
-	if _, err := tx.ExecContext(ctx, `
+	deliveryResult, err := tx.ExecContext(ctx, `
 		UPDATE hookbound_deliveries
 		SET state = $1, next_attempt_at = COALESCE($2, next_attempt_at), lease_expires_at = NULL,
 			last_status_code = NULLIF($3, 0), last_error_code = NULLIF($4, ''), updated_at = $5,
 			completed_at = $6
 		WHERE id = $7 AND state = 'in_flight' AND attempt_count = $8`,
 		state, nullTime(nextAttempt), result.StatusCode, string(errorCode), now, completedAt,
-		claimed.DeliveryID, claimed.Attempt); err != nil {
+		claimed.DeliveryID, claimed.Attempt)
+	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "complete webhook delivery", err)
+	}
+	rows, err := deliveryResult.RowsAffected()
+	if err != nil {
+		return hookbound.NewError(hookbound.CodePersistence, "inspect webhook delivery completion", err)
+	}
+	if rows != 1 {
+		return hookbound.NewError(hookbound.CodeConflict, "delivery lease was lost before completion", nil)
 	}
 	if err := tx.Commit(); err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "commit delivery completion", err)
@@ -353,16 +396,23 @@ func (s *Store) CompleteReceipt(ctx context.Context, claimed *ClaimedReceipt, ha
 	return nil
 }
 
-func deliveryTransition(now time.Time, attempt int, result hookbound.AttemptResult, sendErr error, retry hookbound.RetryPolicy) (DeliveryState, time.Time) {
-	outcome := result.Outcome
-	if outcome == 0 && sendErr != nil {
-		switch hookbound.ErrorCode(sendErr) {
-		case hookbound.CodeInvalidMessage, hookbound.CodeInvalidURL, hookbound.CodeUnsafeDestination, hookbound.CodeInvalidConfiguration:
-			outcome = hookbound.OutcomePermanentFailure
-		default:
-			outcome = hookbound.OutcomeRetry
-		}
+func normalizedOutcome(outcome hookbound.Outcome, sendErr error) hookbound.Outcome {
+	if outcome != 0 {
+		return outcome
 	}
+	if sendErr == nil {
+		return hookbound.OutcomeRetry
+	}
+	switch hookbound.ErrorCode(sendErr) {
+	case hookbound.CodeInvalidMessage, hookbound.CodeInvalidURL, hookbound.CodeUnsafeDestination, hookbound.CodeInvalidConfiguration:
+		return hookbound.OutcomePermanentFailure
+	default:
+		return hookbound.OutcomeRetry
+	}
+}
+
+func deliveryTransition(now time.Time, attempt int, result hookbound.AttemptResult, sendErr error, retry hookbound.RetryPolicy) (DeliveryState, time.Time) {
+	outcome := normalizedOutcome(result.Outcome, sendErr)
 	switch outcome {
 	case hookbound.OutcomeDelivered:
 		return DeliveryDelivered, time.Time{}
@@ -371,13 +421,14 @@ func deliveryTransition(now time.Time, attempt int, result hookbound.AttemptResu
 	case hookbound.OutcomePermanentFailure:
 		return DeliveryPermanentFailure, time.Time{}
 	default:
+		policyNext, allowed := retry.Next(now, attempt)
+		if !allowed {
+			return DeliveryExhausted, time.Time{}
+		}
 		if !result.RetryAt.IsZero() && result.RetryAt.After(now) {
 			return DeliveryRetry, result.RetryAt
 		}
-		if next, ok := retry.Next(now, attempt); ok {
-			return DeliveryRetry, next
-		}
-		return DeliveryExhausted, time.Time{}
+		return DeliveryRetry, policyNext
 	}
 }
 
@@ -392,9 +443,37 @@ func truncateError(err error, maximum int) string {
 	if err == nil {
 		return ""
 	}
-	value := err.Error()
+	value := redactURLQuery(err.Error())
 	if len(value) <= maximum {
 		return value
 	}
 	return value[:maximum]
+}
+
+var urlWithQuery = regexp.MustCompile(`https?://[^\s"']+\?[^\s"']*`)
+
+func redactURLQuery(value string) string {
+	return urlWithQuery.ReplaceAllStringFunc(value, func(raw string) string {
+		if index := strings.IndexByte(raw, '?'); index >= 0 {
+			return raw[:index] + "?<redacted>"
+		}
+		return raw
+	})
+}
+
+func containsSensitiveHeaders(headers http.Header) bool {
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
+		if len(headers.Values(name)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func redactedHeaders(headers http.Header) http.Header {
+	clone := headers.Clone()
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
+		clone.Del(name)
+	}
+	return clone
 }

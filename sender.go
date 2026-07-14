@@ -156,7 +156,7 @@ func (s *Sender) Send(ctx context.Context, request SendRequest) (AttemptResult, 
 	}
 	defer response.Body.Close()
 	result.StatusCode = response.StatusCode
-	result.ResponseHeader = response.Header.Clone()
+	result.ResponseHeader = safeResponseHeaders(response.Header)
 
 	limited := io.LimitReader(response.Body, s.maxResponse+1)
 	responseBody, readErr := io.ReadAll(limited)
@@ -192,6 +192,14 @@ func copyHeaders(destination, source http.Header) error {
 		}
 	}
 	return nil
+}
+
+func safeResponseHeaders(source http.Header) http.Header {
+	clone := source.Clone()
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
+		clone.Del(name)
+	}
+	return clone
 }
 
 func IsTransportError(err error) bool {

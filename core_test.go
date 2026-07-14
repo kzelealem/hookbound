@@ -105,3 +105,9 @@ func TestErrorCode(t *testing.T) {
 		t.Fatalf("unexpected code: %s", got)
 	}
 }
+
+func TestErrorCodeNilIsEmpty(t *testing.T) {
+	if code := ErrorCode(nil); code != "" {
+		t.Fatalf("expected empty code for nil error, got %q", code)
+	}
+}

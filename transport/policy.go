@@ -27,9 +27,11 @@ type Resolver interface {
 // Policy controls which destinations the transport may dial.
 type Policy struct {
 	AllowPlainHTTP bool
+	AllowAnyPort   bool
 	AllowedPorts   map[uint16]struct{}
 	AllowedCIDRs   []netip.Prefix
 	Resolver       Resolver
+	Proxy          func(*http.Request) (*url.URL, error)
 	Dialer         *net.Dialer
 	TLSConfig      *tls.Config
 
@@ -58,6 +60,7 @@ func DefaultPolicy() Policy {
 func DevelopmentPolicy() Policy {
 	policy := DefaultPolicy()
 	policy.AllowPlainHTTP = true
+	policy.AllowAnyPort = true
 	policy.AllowedPorts = nil
 	policy.AllowedCIDRs = []netip.Prefix{
 		netip.MustParsePrefix("127.0.0.0/8"),
@@ -70,6 +73,12 @@ func (p Policy) normalized() Policy {
 	defaults := DefaultPolicy()
 	if p.Resolver == nil {
 		p.Resolver = net.DefaultResolver
+	}
+	if !p.AllowAnyPort && p.AllowedPorts == nil {
+		p.AllowedPorts = make(map[uint16]struct{}, len(defaults.AllowedPorts))
+		for port := range defaults.AllowedPorts {
+			p.AllowedPorts[port] = struct{}{}
+		}
 	}
 	if p.DialTimeout <= 0 {
 		p.DialTimeout = defaults.DialTimeout
@@ -153,7 +162,7 @@ func NewClient(policy Policy) *http.Client {
 func NewTransport(policy Policy) *http.Transport {
 	policy = policy.normalized()
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 policy.Proxy,
 		DialContext:           dialContext(policy),
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          policy.MaxIdleConns,

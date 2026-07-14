@@ -75,3 +75,25 @@ func FuzzValidateURL(f *testing.F) {
 		_, _ = ValidateURL(value, DefaultPolicy())
 	})
 }
+
+func TestZeroPolicyStillRestrictsPorts(t *testing.T) {
+	if _, err := ValidateURL("https://example.com:8443/webhook", Policy{}); err == nil {
+		t.Fatal("expected zero policy to retain secure port defaults")
+	}
+	if _, err := ValidateURL("https://example.com/webhook", Policy{}); err != nil {
+		t.Fatalf("expected default HTTPS port to be accepted: %v", err)
+	}
+}
+
+func TestDevelopmentPolicyAllowsArbitraryPort(t *testing.T) {
+	if _, err := ValidateURL("http://127.0.0.1:49152/webhook", DevelopmentPolicy()); err != nil {
+		t.Fatalf("expected explicit development policy to allow local port: %v", err)
+	}
+}
+
+func TestTransportDoesNotUseEnvironmentProxyByDefault(t *testing.T) {
+	transport := NewTransport(DefaultPolicy())
+	if transport.Proxy != nil {
+		t.Fatal("expected proxying to be opt-in")
+	}
+}

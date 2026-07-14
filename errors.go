@@ -54,6 +54,9 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Cause }
 
 func ErrorCode(err error) Code {
+	if err == nil {
+		return ""
+	}
 	var coded *Error
 	if errors.As(err, &coded) {
 		return coded.Code

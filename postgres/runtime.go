@@ -43,6 +43,9 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if config.Sender == nil && config.OutboundWorkers != 0 {
 		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "sender is required for outbound workers", nil)
 	}
+	if config.InboundHandler == nil && config.InboundWorkers != 0 {
+		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "inbound handler is required for inbound workers", nil)
+	}
 	if config.RetryPolicy.MaxAttempts == 0 && len(config.RetryPolicy.Schedule) == 0 {
 		config.RetryPolicy = hookbound.StandardRetryPolicy()
 	}
