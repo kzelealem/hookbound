@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hookbound/hookbound/standard"
 )
 
 func TestGenerateSecret(t *testing.T) {
@@ -77,5 +80,47 @@ func TestVersion(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "hookbound") {
 		t.Fatalf("unexpected version output: %q", stdout.String())
+	}
+}
+
+func TestVerifyExtractsJSONTypeByDefault(t *testing.T) {
+	var secretOutput bytes.Buffer
+	if err := run([]string{"generate-secret"}, &secretOutput, new(bytes.Buffer)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOOKBOUND_TEST_SECRET", strings.TrimSpace(secretOutput.String()))
+	bodyFile := filepath.Join(t.TempDir(), "body.json")
+	if err := os.WriteFile(bodyFile, []byte(`{"type":"invoice.paid"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var signed bytes.Buffer
+	if err := run([]string{
+		"sign", "--secret-env", "HOOKBOUND_TEST_SECRET", "--body", bodyFile, "--id", "msg_cli_type",
+	}, &signed, new(bytes.Buffer)); err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		MessageID string              `json:"message_id"`
+		Timestamp int64               `json:"timestamp"`
+		Headers   map[string][]string `json:"headers"`
+	}
+	if err := json.Unmarshal(signed.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	var verified bytes.Buffer
+	if err := run([]string{
+		"verify",
+		"--secret-env", "HOOKBOUND_TEST_SECRET",
+		"--body", bodyFile,
+		"--id", envelope.MessageID,
+		"--timestamp", strconv.FormatInt(envelope.Timestamp, 10),
+		"--signature", envelope.Headers[standard.HeaderSignature][0],
+	}, &verified, new(bytes.Buffer)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(verified.String(), `"event_type":"invoice.paid"`) {
+		t.Fatalf("default verifier did not extract JSON type: %s", verified.String())
 	}
 }

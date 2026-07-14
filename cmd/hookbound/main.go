@@ -142,8 +142,6 @@ func verify(arguments []string, stdout, stderr io.Writer) error {
 	config := standard.VerifierConfig{HMACKeys: keys, Tolerance: *tolerance}
 	if *eventType != "" {
 		config.ExtractType = func([]byte, http.Header) (string, error) { return *eventType, nil }
-	} else {
-		config.AllowNoType = true
 	}
 	verifier, err := standard.NewVerifier(config)
 	if err != nil {
