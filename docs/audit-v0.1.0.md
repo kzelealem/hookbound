@@ -240,13 +240,13 @@ On the available Go 1.23.2 toolchain:
 - Standard signature parser fuzzed for 2 seconds with 2,912 executions;
 - transport URL parser fuzzed for 2 seconds with 15,705 executions;
 - package coverage after hardening:
-  - root: 62.0%;
+  - root: 66.7%;
   - CLI: 69.5%;
-  - PostgreSQL: 14.0%;
+  - PostgreSQL: 15.7%;
   - GitHub: 72.1%;
   - Stripe: 78.3%;
-  - Standard Webhooks: 67.4%;
-  - testkit: 50.4%;
+  - Standard Webhooks: 68.1%;
+  - testkit: 51.3%;
   - transport: 82.2%.
 
 The environment could not download Go 1.25/1.26 toolchains or locally install/run `govulncheck`, `staticcheck`, `gosec`, or a PostgreSQL driver because outbound module-network access and Docker were unavailable. CI is configured for the current toolchains and vulnerability scan, but those results were not independently reproduced during this audit.
