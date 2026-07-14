@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kzelealem/hookbound"
 	hookboundpg "github.com/kzelealem/hookbound/postgres"
-	_ "github.com/lib/pq"
 )
 
 var integrationDatabaseURL string
@@ -427,7 +427,7 @@ func newStore(t *testing.T, clock hookbound.Clock) (*sql.DB, *hookboundpg.Store,
 
 func openDatabase(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("postgres", integrationDatabaseURL)
+	db, err := sql.Open("pgx", integrationDatabaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func testSchema(t *testing.T) string {
 	}
 	schema := "hb_" + baseName + suffix
 	t.Cleanup(func() {
-		db, err := sql.Open("postgres", integrationDatabaseURL)
+		db, err := sql.Open("pgx", integrationDatabaseURL)
 		if err == nil {
 			_, _ = db.ExecContext(context.Background(), fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, quoteIdentifier(schema)))
 			_ = db.Close()
@@ -543,7 +543,7 @@ func startPostgresContainer(ctx context.Context) (string, func(), error) {
 		return "", nil, fmt.Errorf("parse PostgreSQL container port %q: %w", address, err)
 	}
 	databaseURL := "postgres://hookbound:hookbound@127.0.0.1:" + port + "/hookbound?sslmode=disable"
-	db, err := sql.Open("postgres", databaseURL)
+	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		cleanup()
 		return "", nil, err
