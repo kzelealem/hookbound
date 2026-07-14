@@ -30,6 +30,15 @@ const (
 	ReceiptExhausted  ReceiptState = "exhausted"
 )
 
+// EnqueueOptions controls durable publication behavior.
+type EnqueueOptions struct {
+	// IdempotencyKey identifies one destination-specific publication. Reusing
+	// the key with byte-for-byte equivalent immutable content returns the
+	// original publication; reusing it with different content fails. Keys are
+	// SHA-256 hashed before persistence.
+	IdempotencyKey string
+}
+
 type Publication struct {
 	MessageID  string
 	DeliveryID string
@@ -52,4 +61,28 @@ type ClaimedReceipt struct {
 	Message   hookbound.VerifiedMessage
 	Attempt   int
 	StartedAt time.Time
+}
+
+// RetentionPolicy controls one bounded cleanup pass. A zero retention duration
+// disables that category. Attempts are removed automatically with deliveries.
+type RetentionPolicy struct {
+	DeliveredRetention      time.Duration
+	FailedDeliveryRetention time.Duration
+	ReceiptRetention        time.Duration
+	OrphanMessageRetention  time.Duration
+	BatchSize               int
+}
+
+// CleanupResult reports rows removed by one bounded cleanup pass.
+type CleanupResult struct {
+	DeliveredDeliveries int64
+	FailedDeliveries    int64
+	Receipts            int64
+	OrphanMessages      int64
+}
+
+// Total returns the total number of primary records removed. Cascaded attempt
+// rows are intentionally not included.
+func (r CleanupResult) Total() int64 {
+	return r.DeliveredDeliveries + r.FailedDeliveries + r.Receipts + r.OrphanMessages
 }

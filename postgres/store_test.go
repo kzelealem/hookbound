@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -194,5 +196,126 @@ func TestDurableWorkerRecoversPanics(t *testing.T) {
 	}), context.Background(), hookbound.VerifiedMessage{})
 	if hookbound.ErrorCode(handlerErr) != hookbound.CodeHandler || !strings.Contains(handlerErr.Error(), "handler boom") {
 		t.Fatalf("unexpected recovered handler panic: %v", handlerErr)
+	}
+}
+
+func TestSchemaValidationAndQualification(t *testing.T) {
+	t.Parallel()
+	for _, schema := range []string{"public", "hookbound", "tenant-one", `tenant"quoted`} {
+		normalized, err := normalizeSchema(schema)
+		if err != nil {
+			t.Fatalf("schema %q rejected: %v", schema, err)
+		}
+		store := &Store{relations: relationsForSchema(normalized)}
+		query := store.qualifyQuery("SELECT * FROM hookbound_messages JOIN hookbound_deliveries USING (message_id)")
+		if !strings.Contains(query, qualifiedRelation(schema, "hookbound_messages")) ||
+			!strings.Contains(query, qualifiedRelation(schema, "hookbound_deliveries")) {
+			t.Fatalf("query was not schema-qualified: %s", query)
+		}
+	}
+	for _, schema := range []string{" leading", "trailing ", "1schema", "bad\x00schema", strings.Repeat("x", 64)} {
+		if _, err := normalizeSchema(schema); err == nil {
+			t.Fatalf("invalid schema %q was accepted", schema)
+		}
+	}
+}
+
+func TestPublicationKeyHashValidationAndStability(t *testing.T) {
+	t.Parallel()
+	first, err := publicationKeyHash("invoice:tenant-1:42:endpoint-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := publicationKeyHash("invoice:tenant-1:42:endpoint-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 32 || string(first) != string(second) {
+		t.Fatalf("unexpected idempotency hash: %x %x", first, second)
+	}
+	if other, _ := publicationKeyHash("invoice:tenant-1:43:endpoint-7"); string(first) == string(other) {
+		t.Fatal("different idempotency keys produced the same test hash")
+	}
+	for _, key := range []string{" key", "key ", "bad\nkey", strings.Repeat("k", 513)} {
+		if _, err := publicationKeyHash(key); err == nil {
+			t.Fatalf("invalid idempotency key %q was accepted", key)
+		}
+	}
+}
+
+func TestRetentionPolicyValidation(t *testing.T) {
+	t.Parallel()
+	if _, err := normalizeRetentionPolicy(RetentionPolicy{DeliveredRetention: -time.Second}); err == nil {
+		t.Fatal("negative retention was accepted")
+	}
+	if _, err := normalizeRetentionPolicy(RetentionPolicy{BatchSize: maximumCleanupBatchSize + 1}); err == nil {
+		t.Fatal("oversized cleanup batch was accepted")
+	}
+	policy, err := normalizeRetentionPolicy(RetentionPolicy{})
+	if err != nil || policy.BatchSize != defaultCleanupBatchSize {
+		t.Fatalf("default cleanup policy was not normalized: policy=%+v err=%v", policy, err)
+	}
+}
+
+func TestCanonicalHeadersMergesCaseVariantsDeterministically(t *testing.T) {
+	t.Parallel()
+	headers := http.Header{
+		"x-test": {"lower"},
+		"X-Test": {"upper"},
+	}
+	canonical := canonicalHeaders(headers)
+	if got := canonical.Values("X-Test"); !reflect.DeepEqual(got, []string{"upper", "lower"}) {
+		t.Fatalf("unexpected canonical header values: %#v", got)
+	}
+}
+
+func TestLeaseHeartbeatRenewsAndStops(t *testing.T) {
+	t.Parallel()
+	var renewals atomic.Int64
+	ctx, heartbeat := startLeaseHeartbeat(context.Background(), 5*time.Millisecond, 2*time.Millisecond, func(context.Context) error {
+		renewals.Add(1)
+		return nil
+	})
+	select {
+	case <-ctx.Done():
+		t.Fatal("work context canceled during successful renewals")
+	case <-time.After(18 * time.Millisecond):
+	}
+	if err := heartbeat.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if renewals.Load() < 2 {
+		t.Fatalf("expected repeated renewals, got %d", renewals.Load())
+	}
+}
+
+func TestLeaseHeartbeatCancelsWorkOnFailureAndPanic(t *testing.T) {
+	t.Parallel()
+	for _, renew := range []func(context.Context) error{
+		func(context.Context) error { return errors.New("database unavailable") },
+		func(context.Context) error { panic("renewal boom") },
+	} {
+		ctx, heartbeat := startLeaseHeartbeat(context.Background(), time.Millisecond, time.Second, renew)
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("heartbeat failure did not cancel work")
+		}
+		if err := heartbeat.Stop(); err == nil {
+			t.Fatal("heartbeat failure was not returned")
+		}
+	}
+}
+
+func TestRuntimeRejectsUnsafeLeaseRenewalTiming(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	_, err := NewRuntime(RuntimeConfig{
+		Store: store, LeaseDuration: time.Second,
+		LeaseRenewalInterval: 800 * time.Millisecond,
+		LeaseRenewalTimeout:  300 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("unsafe lease renewal timing was accepted")
 	}
 }

@@ -19,6 +19,13 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+// MigrationConfig configures the embedded migration runner.
+type MigrationConfig struct {
+	// Schema is created when it does not exist and is made the explicit local
+	// search path while migrations run. The default is public for compatibility.
+	Schema string
+}
+
 // Migrations returns the embedded SQL migration files for integration with an
 // application's migration tool.
 func Migrations() fs.FS {
@@ -29,13 +36,21 @@ func Migrations() fs.FS {
 	return sub
 }
 
-// Migrate applies Hookbound's embedded migrations transactionally. It records
-// a checksum for each migration and serializes concurrent migrators with a
-// PostgreSQL advisory transaction lock. Production teams may instead consume
-// Migrations through their existing migration tool.
+// Migrate applies Hookbound's embedded migrations to the public schema.
 func Migrate(ctx context.Context, db *sql.DB) error {
+	return MigrateWithConfig(ctx, db, MigrationConfig{})
+}
+
+// MigrateWithConfig applies Hookbound's embedded migrations transactionally.
+// It creates and selects the configured schema, records migration checksums,
+// and serializes concurrent migrators with a schema-specific advisory lock.
+func MigrateWithConfig(ctx context.Context, db *sql.DB, config MigrationConfig) error {
 	if db == nil {
 		return fmt.Errorf("hookbound postgres: database is required")
+	}
+	schema, err := normalizeSchema(config.Schema)
+	if err != nil {
+		return fmt.Errorf("hookbound postgres: schema: %w", err)
 	}
 	entries, err := fs.ReadDir(Migrations(), ".")
 	if err != nil {
@@ -54,15 +69,22 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("hookbound postgres: begin migrations: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('hookbound:migrations', 0))`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, "hookbound:migrations:"+schema); err != nil {
 		return fmt.Errorf("hookbound postgres: lock migrations: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS hookbound_schema_migrations (
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS %s`, quoteIdentifier(schema))); err != nil {
+		return fmt.Errorf("hookbound postgres: create schema %q: %w", schema, err)
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_catalog.set_config('search_path', $1, true)`, schemaSearchPath(schema)); err != nil {
+		return fmt.Errorf("hookbound postgres: set migration search path: %w", err)
+	}
+	relations := relationsForSchema(schema)
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
 			name text PRIMARY KEY,
 			checksum text NOT NULL,
 			applied_at timestamptz NOT NULL DEFAULT clock_timestamp()
-		)`); err != nil {
+		)`, relations.migrations)); err != nil {
 		return fmt.Errorf("hookbound postgres: create migration ledger: %w", err)
 	}
 
@@ -73,7 +95,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		}
 		checksum := migrationChecksum(contents)
 		var existing string
-		err = tx.QueryRowContext(ctx, `SELECT checksum FROM hookbound_schema_migrations WHERE name = $1`, name).Scan(&existing)
+		err = tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT checksum FROM %s WHERE name = $1`, relations.migrations), name).Scan(&existing)
 		switch {
 		case err == nil:
 			if existing != checksum {
@@ -89,8 +111,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 				return fmt.Errorf("hookbound postgres: apply %s statement %d: %w", name, index+1, err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO hookbound_schema_migrations (name, checksum) VALUES ($1, $2)`, name, checksum); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO %s (name, checksum) VALUES ($1, $2)`, relations.migrations), name, checksum); err != nil {
 			return fmt.Errorf("hookbound postgres: record migration %s: %w", name, err)
 		}
 	}
