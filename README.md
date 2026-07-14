@@ -99,7 +99,7 @@ See [docs/reliability.md](docs/reliability.md) and [docs/security.md](docs/secur
 make verify
 ```
 
-The repository is tested with the race detector, fuzz smoke tests, `go vet`, and multiple supported Go versions in CI.
+The repository is tested with the race detector, dedicated bounded fuzz jobs, `go vet`, and multiple Go toolchain lines in CI.
 
 ## License
 
