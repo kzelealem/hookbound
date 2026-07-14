@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,5 +111,124 @@ func TestReceiverReleasesReplayClaimWhenHandlerFails(t *testing.T) {
 	receiver.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
 	if second.Code != http.StatusNoContent || calls != 2 {
 		t.Fatalf("expected provider retry to run again, status=%d calls=%d", second.Code, calls)
+	}
+}
+
+type failingReplayGuard struct {
+	commitErr  error
+	releaseErr error
+}
+
+func (g failingReplayGuard) Claim(context.Context, string, string, time.Time) (bool, error) {
+	return true, nil
+}
+
+func (g failingReplayGuard) Commit(context.Context, string, string, time.Time) error {
+	return g.commitErr
+}
+
+func (g failingReplayGuard) Release(context.Context, string, string) error {
+	return g.releaseErr
+}
+
+func TestReceiverDoesNotAcknowledgeConcurrentMessageBeforeHandlerCommits(t *testing.T) {
+	body := []byte(`{"type":"test.concurrent"}`)
+	verifier := verifierFunc(func(context.Context, hookbound.VerifyInput) (hookbound.Verification, error) {
+		return hookbound.Verification{ID: "msg_concurrent", Type: "test.concurrent", Source: "test", Timestamp: time.Unix(1000, 0)}, nil
+	})
+	entered := make(chan struct{})
+	unblock := make(chan struct{})
+	var calls int
+	var mu sync.Mutex
+	receiver, err := hookbound.NewReceiver(hookbound.ReceiverConfig{
+		Verifier: verifier,
+		Handler: hookbound.HandlerFunc(func(context.Context, hookbound.VerifiedMessage) error {
+			mu.Lock()
+			calls++
+			call := calls
+			mu.Unlock()
+			if call == 1 {
+				close(entered)
+				<-unblock
+				return errors.New("temporary failure")
+			}
+			return nil
+		}),
+		ReplayGuard: hookbound.NewMemoryReplayGuard(10, fixedClock{time.Unix(1000, 0)}),
+		Clock:       fixedClock{time.Unix(1000, 0)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		response := httptest.NewRecorder()
+		receiver.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+		firstDone <- response
+	}()
+	<-entered
+
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		response := httptest.NewRecorder()
+		receiver.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+		secondDone <- response
+	}()
+	select {
+	case response := <-secondDone:
+		t.Fatalf("duplicate completed before the active handler: status=%d", response.Code)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(unblock)
+	first := <-firstDone
+	second := <-secondDone
+	if first.Code != http.StatusInternalServerError {
+		t.Fatalf("expected first attempt to fail, got %d", first.Code)
+	}
+	if second.Code != http.StatusNoContent {
+		t.Fatalf("expected waiting duplicate to retry after release, got %d", second.Code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("expected two serialized handler calls, got %d", calls)
+	}
+}
+
+func TestReceiverDoesNotAcknowledgeReplayCommitFailure(t *testing.T) {
+	receiver, err := hookbound.NewReceiver(hookbound.ReceiverConfig{
+		Verifier: verifierFunc(func(context.Context, hookbound.VerifyInput) (hookbound.Verification, error) {
+			return hookbound.Verification{ID: "msg_commit", Type: "test.commit", Source: "test", Timestamp: time.Unix(1000, 0)}, nil
+		}),
+		Handler:     hookbound.HandlerFunc(func(context.Context, hookbound.VerifiedMessage) error { return nil }),
+		ReplayGuard: failingReplayGuard{commitErr: errors.New("store unavailable")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	receiver.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", http.NoBody))
+	if response.Code < 500 {
+		t.Fatalf("replay commit failure was acknowledged with %d", response.Code)
+	}
+}
+
+func TestReceiverDoesNotAcknowledgeHandlerAndReleaseFailure(t *testing.T) {
+	receiver, err := hookbound.NewReceiver(hookbound.ReceiverConfig{
+		Verifier: verifierFunc(func(context.Context, hookbound.VerifyInput) (hookbound.Verification, error) {
+			return hookbound.Verification{ID: "msg_release", Type: "test.release", Source: "test", Timestamp: time.Unix(1000, 0)}, nil
+		}),
+		Handler:     hookbound.HandlerFunc(func(context.Context, hookbound.VerifiedMessage) error { return errors.New("handler failed") }),
+		ReplayGuard: failingReplayGuard{releaseErr: errors.New("store unavailable")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	receiver.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", http.NoBody))
+	if response.Code < 500 {
+		t.Fatalf("handler and replay release failure was acknowledged with %d", response.Code)
 	}
 }

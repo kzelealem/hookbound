@@ -130,11 +130,17 @@ func (r *Receiver) ServeHTTP(writer http.ResponseWriter, request *http.Request) 
 	if err := r.handler.Handle(request.Context(), message); err != nil {
 		if r.replayGuard != nil {
 			if releaseErr := r.replayGuard.Release(request.Context(), message.Source, message.ID); releaseErr != nil {
-				err = errors.Join(err, NewError(CodeReplay, "release failed replay claim", releaseErr))
+				err = NewError(CodeHandler, "handle webhook and release replay claim", errors.Join(err, releaseErr))
 			}
 		}
 		r.respondError(writer, request, err)
 		return
+	}
+	if committer, ok := r.replayGuard.(ReplayCommitter); ok {
+		if err := committer.Commit(request.Context(), message.Source, message.ID, r.clock.Now().UTC().Add(r.replayTTL)); err != nil {
+			r.respondError(writer, request, NewError(CodeReplay, "commit replay claim", err))
+			return
+		}
 	}
 	writer.WriteHeader(r.successStatus)
 }
@@ -167,9 +173,6 @@ func defaultErrorResponder(writer http.ResponseWriter, _ *http.Request, err erro
 	case CodeBodyTooLarge:
 		status = http.StatusRequestEntityTooLarge
 		message = "webhook body too large"
-	case CodeReplay:
-		status = http.StatusNoContent
-		message = ""
 	case CodeUnknownEvent:
 		status = http.StatusUnprocessableEntity
 		message = "unsupported webhook event"
