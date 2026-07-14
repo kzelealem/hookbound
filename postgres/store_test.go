@@ -169,3 +169,13 @@ func TestErrorDetailsAreOptInAndUTF8Safe(t *testing.T) {
 		t.Fatalf("truncated error is not valid bounded UTF-8: len=%d", len(got))
 	}
 }
+
+func TestMigrationChecksumIsStableAndContentSensitive(t *testing.T) {
+	first := migrationChecksum([]byte("SELECT 1"))
+	if first != migrationChecksum([]byte("SELECT 1")) {
+		t.Fatal("migration checksum is not stable")
+	}
+	if first == migrationChecksum([]byte("SELECT 2")) {
+		t.Fatal("migration checksum ignored content changes")
+	}
+}
