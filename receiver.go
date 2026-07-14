@@ -2,6 +2,7 @@ package hookbound
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -127,7 +128,7 @@ func (r *Receiver) ServeHTTP(writer http.ResponseWriter, request *http.Request) 
 			return
 		}
 	}
-	if err := r.handler.Handle(request.Context(), message); err != nil {
+	if err := r.handle(request.Context(), message); err != nil {
 		if r.replayGuard != nil {
 			if releaseErr := r.replayGuard.Release(request.Context(), message.Source, message.ID); releaseErr != nil {
 				err = NewError(CodeHandler, "handle webhook and release replay claim", errors.Join(err, releaseErr))
@@ -143,6 +144,20 @@ func (r *Receiver) ServeHTTP(writer http.ResponseWriter, request *http.Request) 
 		}
 	}
 	writer.WriteHeader(r.successStatus)
+}
+
+func (r *Receiver) handle(ctx context.Context, message VerifiedMessage) (err error) {
+	if r.replayGuard != nil {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+				_ = r.replayGuard.Release(releaseCtx, message.Source, message.ID)
+				cancel()
+				panic(recovered)
+			}
+		}()
+	}
+	return r.handler.Handle(ctx, message)
 }
 
 func readBounded(reader io.ReadCloser, maximum int64) ([]byte, error) {

@@ -232,3 +232,40 @@ func TestReceiverDoesNotAcknowledgeHandlerAndReleaseFailure(t *testing.T) {
 		t.Fatalf("handler and replay release failure was acknowledged with %d", response.Code)
 	}
 }
+
+func TestReceiverReleasesReplayClaimWhenHandlerPanics(t *testing.T) {
+	body := []byte(`{"type":"test.panic"}`)
+	verifier := verifierFunc(func(context.Context, hookbound.VerifyInput) (hookbound.Verification, error) {
+		return hookbound.Verification{ID: "msg_panic", Type: "test.panic", Source: "test", Timestamp: time.Unix(1000, 0)}, nil
+	})
+	calls := 0
+	receiver, err := hookbound.NewReceiver(hookbound.ReceiverConfig{
+		Verifier: verifier,
+		Handler: hookbound.HandlerFunc(func(context.Context, hookbound.VerifiedMessage) error {
+			calls++
+			if calls == 1 {
+				panic("boom")
+			}
+			return nil
+		}),
+		ReplayGuard: hookbound.NewMemoryReplayGuard(10, fixedClock{time.Unix(1000, 0)}),
+		Clock:       fixedClock{time.Unix(1000, 0)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected handler panic")
+			}
+		}()
+		receiver.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	}()
+
+	response := httptest.NewRecorder()
+	receiver.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+	if response.Code != http.StatusNoContent || calls != 2 {
+		t.Fatalf("panic left replay claim stuck: status=%d calls=%d", response.Code, calls)
+	}
+}

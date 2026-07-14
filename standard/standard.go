@@ -154,8 +154,8 @@ func (s *HMACSigner) Sign(ctx context.Context, input hookbound.SignInput) (http.
 type Ed25519Signer struct{ signers []crypto.Signer }
 
 func NewEd25519Signer(signers ...crypto.Signer) (*Ed25519Signer, error) {
-	if len(signers) == 0 {
-		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "at least one Ed25519 signer is required", nil)
+	if len(signers) == 0 || len(signers) > 16 {
+		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "between one and sixteen Ed25519 signers are required", nil)
 	}
 	for _, signer := range signers {
 		if signer == nil {
@@ -187,6 +187,9 @@ func (s *Ed25519Signer) Sign(_ context.Context, input hookbound.SignInput) (http
 		if err != nil {
 			return nil, hookbound.NewError(hookbound.CodeInternal, "sign with Ed25519 key", err)
 		}
+		if len(signature) != ed25519.SignatureSize {
+			return nil, hookbound.NewError(hookbound.CodeInternal, "Ed25519 signer returned an invalid signature length", nil)
+		}
 		signatures = append(signatures, ed25519SignatureID+","+base64.StdEncoding.EncodeToString(signature))
 	}
 	return http.Header{
@@ -207,6 +210,10 @@ func JSONTypeField(body []byte, _ http.Header) (string, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&envelope); err != nil {
 		return "", hookbound.NewError(hookbound.CodeDecode, "decode Standard Webhooks event type", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return "", hookbound.NewError(hookbound.CodeDecode, "Standard Webhooks payload contains trailing data", err)
 	}
 	if err := hookbound.ValidateEventType(envelope.Type); err != nil {
 		return "", err

@@ -176,3 +176,24 @@ func TestSendRequestRejectsInvalidHeadersBeforePersistenceOrSend(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageIDRejectsWhitespaceAndControls(t *testing.T) {
+	for _, id := range []string{" msg", "msg ", "msg\tvalue", "msg\x7fvalue"} {
+		if err := ValidateMessageID(id); ErrorCode(err) != CodeInvalidMessage {
+			t.Fatalf("message ID %q was accepted: %v", id, err)
+		}
+	}
+}
+
+func TestAuthenticationRejectsHeaderInjectionAndInvalidBasicUsername(t *testing.T) {
+	request, _ := http.NewRequest(http.MethodPost, "https://example.com", nil)
+	if err := BearerAuth(StaticSecret("secret\x00value")).Apply(context.Background(), request); ErrorCode(err) != CodeInvalidConfiguration {
+		t.Fatalf("control character in bearer token was accepted: %v", err)
+	}
+	if err := BasicAuth("user:name", StaticSecret("password")).Apply(context.Background(), request); ErrorCode(err) != CodeInvalidConfiguration {
+		t.Fatalf("colon in basic username was accepted: %v", err)
+	}
+	if _, err := HeaderAuth("Bad Header", StaticSecret("secret")); ErrorCode(err) != CodeInvalidConfiguration {
+		t.Fatalf("invalid authentication header name was accepted: %v", err)
+	}
+}

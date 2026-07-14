@@ -51,8 +51,13 @@ func ValidateMessageID(id string) error {
 	if len(id) > 200 {
 		return NewError(CodeInvalidMessage, "message id is too long", nil)
 	}
-	if strings.ContainsAny(id, ".\r\n\x00") {
+	if strings.TrimSpace(id) != id || strings.ContainsRune(id, '.') {
 		return NewError(CodeInvalidMessage, "message id contains forbidden characters", nil)
+	}
+	for index := 0; index < len(id); index++ {
+		if id[index] < 0x20 || id[index] == 0x7f {
+			return NewError(CodeInvalidMessage, "message id contains forbidden characters", nil)
+		}
 	}
 	return nil
 }

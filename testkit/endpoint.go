@@ -162,6 +162,9 @@ func (e *Endpoint) serveHTTP(writer http.ResponseWriter, request *http.Request) 
 		status = http.StatusNoContent
 	}
 	writer.WriteHeader(status)
+	if status >= 100 && status < 200 || status == http.StatusNoContent || status == http.StatusNotModified {
+		return
+	}
 	_, _ = writer.Write(response.Body)
 }
 

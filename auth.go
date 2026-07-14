@@ -50,6 +50,9 @@ func BearerAuth(provider SecretProvider) Authenticator {
 
 func BasicAuth(username string, password SecretProvider) Authenticator {
 	return authFunc(func(ctx context.Context, request *http.Request) error {
+		if username == "" || strings.ContainsRune(username, ':') || containsHeaderControl(username) {
+			return NewError(CodeInvalidConfiguration, "invalid basic authentication username", nil)
+		}
 		secret, err := resolveSecret(ctx, password)
 		if err != nil {
 			return err
@@ -61,8 +64,8 @@ func BasicAuth(username string, password SecretProvider) Authenticator {
 }
 
 func HeaderAuth(name string, provider SecretProvider) (Authenticator, error) {
-	canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
-	if canonical == "" || strings.ContainsAny(canonical, "\r\n") {
+	canonical := http.CanonicalHeaderKey(name)
+	if !validHeaderName(name) {
 		return nil, NewError(CodeInvalidConfiguration, "invalid authentication header name", nil)
 	}
 	return authFunc(func(ctx context.Context, request *http.Request) error {
@@ -86,8 +89,19 @@ func resolveSecret(ctx context.Context, provider SecretProvider) (string, error)
 	if secret == "" {
 		return "", NewError(CodeInvalidConfiguration, "resolved secret is empty", nil)
 	}
-	if strings.ContainsAny(secret, "\r\n") {
+	if containsHeaderControl(secret) {
 		return "", NewError(CodeInvalidConfiguration, fmt.Sprintf("resolved secret contains forbidden characters for %T", provider), nil)
 	}
 	return secret, nil
+}
+
+func containsHeaderControl(value string) bool {
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character == '\t' || character >= 0x20 && character != 0x7f {
+			continue
+		}
+		return true
+	}
+	return false
 }

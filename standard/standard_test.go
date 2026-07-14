@@ -3,6 +3,7 @@ package standard
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ed25519"
 	"encoding/base64"
 	"net/http"
@@ -217,6 +218,27 @@ func TestVerifierRejectsExcessivePublicKeyRotationSet(t *testing.T) {
 	}
 	_, err = verifier.Verify(context.Background(), hookbound.VerifyInput{Headers: headers, Body: []byte(`{}`), ReceivedAt: time.Unix(1000, 0)})
 	if hookbound.ErrorCode(err) != hookbound.CodeInvalidConfiguration {
+		t.Fatalf("expected invalid configuration, got %v", err)
+	}
+}
+
+func TestJSONTypeFieldRejectsTrailingData(t *testing.T) {
+	_, err := JSONTypeField([]byte(`{"type":"invoice.paid"} trailing`), nil)
+	if hookbound.ErrorCode(err) != hookbound.CodeDecode {
+		t.Fatalf("expected decode failure, got %v", err)
+	}
+}
+
+func TestEd25519SignerRejectsExcessiveRotationSet(t *testing.T) {
+	signers := make([]crypto.Signer, 17)
+	for index := range signers {
+		_, private, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signers[index] = private
+	}
+	if _, err := NewEd25519Signer(signers...); hookbound.ErrorCode(err) != hookbound.CodeInvalidConfiguration {
 		t.Fatalf("expected invalid configuration, got %v", err)
 	}
 }
