@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -118,7 +120,7 @@ func (r *Runtime) runLoop(ctx context.Context, kind string, worker int, work fun
 			return
 		case <-timer.C:
 		}
-		worked, err := work(ctx)
+		worked, err := runWorkSafely(ctx, work)
 		if err != nil && ctx.Err() == nil {
 			r.logger.ErrorContext(ctx, "hookbound durable worker failed", "kind", kind, "worker", worker, "error", err)
 		}
@@ -138,7 +140,7 @@ func (r *Runtime) WorkOutboundOnce(ctx context.Context) (bool, error) {
 	if err != nil || claimed == nil {
 		return false, err
 	}
-	result, sendErr := r.sender.Send(ctx, hookbound.SendRequest{
+	result, sendErr := sendSafely(r.sender, ctx, hookbound.SendRequest{
 		ID: claimed.MessageID, URL: claimed.Destination, EventType: claimed.EventType,
 		Body: claimed.Body, ContentType: claimed.ContentType, Headers: claimed.Headers,
 	})
@@ -158,11 +160,43 @@ func (r *Runtime) WorkInboundOnce(ctx context.Context) (bool, error) {
 	if err != nil || claimed == nil {
 		return false, err
 	}
-	handlerErr := r.inbound.Handle(ctx, claimed.Message)
+	handlerErr := handleSafely(r.inbound, ctx, claimed.Message)
 	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.completion)
 	defer cancel()
 	if err := r.store.CompleteReceipt(completionCtx, claimed, handlerErr, r.retry); err != nil {
 		return true, err
 	}
 	return true, nil
+}
+
+func runWorkSafely(ctx context.Context, work func(context.Context) (bool, error)) (worked bool, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = hookbound.NewError(hookbound.CodeInternal, "durable worker panicked", panicCause(recovered))
+		}
+	}()
+	return work(ctx)
+}
+
+func sendSafely(sender *hookbound.Sender, ctx context.Context, request hookbound.SendRequest) (result hookbound.AttemptResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result.ErrorCode = hookbound.CodeInternal
+			err = hookbound.NewError(hookbound.CodeInternal, "outbound delivery panicked", panicCause(recovered))
+		}
+	}()
+	return sender.Send(ctx, request)
+}
+
+func handleSafely(handler hookbound.Handler, ctx context.Context, message hookbound.VerifiedMessage) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = hookbound.NewError(hookbound.CodeHandler, "inbound handler panicked", panicCause(recovered))
+		}
+	}()
+	return handler.Handle(ctx, message)
+}
+
+func panicCause(recovered any) error {
+	return fmt.Errorf("panic: %v\n%s", recovered, debug.Stack())
 }

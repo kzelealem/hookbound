@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -177,5 +178,21 @@ func TestMigrationChecksumIsStableAndContentSensitive(t *testing.T) {
 	}
 	if first == migrationChecksum([]byte("SELECT 2")) {
 		t.Fatal("migration checksum ignored content changes")
+	}
+}
+
+func TestDurableWorkerRecoversPanics(t *testing.T) {
+	worked, err := runWorkSafely(context.Background(), func(context.Context) (bool, error) {
+		panic("worker boom")
+	})
+	if worked || hookbound.ErrorCode(err) != hookbound.CodeInternal || !strings.Contains(err.Error(), "worker boom") {
+		t.Fatalf("unexpected recovered worker panic: worked=%v err=%v", worked, err)
+	}
+
+	handlerErr := handleSafely(hookbound.HandlerFunc(func(context.Context, hookbound.VerifiedMessage) error {
+		panic("handler boom")
+	}), context.Background(), hookbound.VerifiedMessage{})
+	if hookbound.ErrorCode(handlerErr) != hookbound.CodeHandler || !strings.Contains(handlerErr.Error(), "handler boom") {
+		t.Fatalf("unexpected recovered handler panic: %v", handlerErr)
 	}
 }
