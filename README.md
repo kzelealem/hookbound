@@ -8,7 +8,7 @@
 
 Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks, receives and verifies third-party events, and provides an optional durable PostgreSQL runtime without forcing applications to deploy a separate webhook platform.
 
-> Status: release candidate for `v0.2.0`. The public API may still evolve before `v1.0.0`; pin an exact version in production.
+> Status: `v0.2.0` is published and ready for early adopters. The public API may still evolve before `v1.0.0`; pin an exact version in production.
 
 ## Design goals
 
