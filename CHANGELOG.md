@@ -9,6 +9,11 @@ All notable changes to Hookbound will be documented here. The project follows Se
 - Froze outbound network policies at sender construction and made `AllowAnyPort` and empty port allow-lists unambiguous.
 - Corrected CLI event-type extraction and expanded adversarial regression and fuzz coverage.
 - Hardened PostgreSQL completion state, redaction, retry classification, database-clock leases, and transactional checksum-tracked migrations.
+- Added explicit PostgreSQL schema isolation, race-safe hashed publication idempotency keys, renewable worker leases, and bounded retention cleanup with supporting indexes.
+- Added real-container PostgreSQL tests for migration concurrency and drift, inbox/outbox deduplication races, `SKIP LOCKED` claiming, lease recovery and heartbeat behavior, stale ownership, and cleanup.
+- Pinned all GitHub Actions to immutable commit SHAs and added signed-tag enforcement, reproducible archives, SHA-256 checksums, an SPDX SBOM, Sigstore provenance, and SBOM attestations for releases.
+- Added schema-isolated PostgreSQL operation, race-safe publication idempotency, active lease renewal, bounded terminal-record retention, and container-backed integration coverage.
+- Pinned every GitHub Action to an immutable commit and added signed-tag release verification, reproducible archives, SHA-256 checksums, SPDX SBOM generation, and Sigstore-backed provenance/SBOM attestations.
 
 ## v0.1.0 — 2026-07-14
 

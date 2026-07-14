@@ -22,3 +22,8 @@ Durable PostgreSQL audit records remove common credential and webhook-signature 
 Standard Webhooks authenticates the message ID, timestamp, and exact body. Put the event `type` inside the signed JSON body. Hookbound's `X-Hookbound-Event` outbound header is convenience metadata and is not part of the Standard Webhooks signature; receivers must not use it as an authentication boundary.
 
 GitHub's `X-Hub-Signature-256` authenticates the request body, not the `X-GitHub-Delivery` or `X-GitHub-Event` headers. Hookbound follows GitHub's protocol and uses those headers for identity and routing after body verification. Deploy GitHub receivers behind trusted TLS termination and prevent untrusted intermediaries from rewriting webhook headers.
+
+
+## Release artifacts
+
+The release workflow accepts only GitHub-verified signed annotated tags. It publishes checksums, an SPDX SBOM, Sigstore-signed build provenance, and a signed SBOM attestation. Third-party actions are pinned to immutable commit SHAs. Consumers should verify release assets as described in [releases.md](releases.md).

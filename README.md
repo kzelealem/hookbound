@@ -4,7 +4,7 @@
 
 Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks, receives and verifies third-party events, and provides an optional durable PostgreSQL runtime without forcing applications to deploy a separate webhook platform.
 
-> Status: `v0.1.0` foundation. The public API is intentionally small, but may evolve before `v1.0.0`.
+> Status: `v0.1.0` is the first published foundation. The Unreleased line contains the production hardening planned for `v0.2.0`; the public API may still evolve before `v1.0.0`.
 
 ## Design goals
 
@@ -68,7 +68,7 @@ result, err := sender.Send(ctx, hookbound.SendRequest{
 })
 ```
 
-A direct send performs exactly one HTTP request. Use `postgres.Runtime` for durable attempts, retry scheduling, inbox deduplication, and crash recovery. See the [quickstart](docs/quickstart.md) and [PostgreSQL guide](docs/postgres.md).
+A direct send performs exactly one HTTP request. Use `postgres.Runtime` for durable attempts, renewable leases, retry scheduling, inbox deduplication, and crash recovery. Durable publication also supports hashed idempotency keys, schema isolation, and bounded retention cleanup. See the [quickstart](docs/quickstart.md) and [PostgreSQL guide](docs/postgres.md).
 
 ## Packages
 
@@ -91,7 +91,7 @@ Hookbound guarantees no more than the underlying HTTP boundary can guarantee:
 - receivers must deduplicate by `(source, message_id)`;
 - a remote endpoint can process a request even when the sender never observes its response.
 
-See [docs/reliability.md](docs/reliability.md) and [docs/security.md](docs/security.md).
+See [docs/reliability.md](docs/reliability.md), [docs/security.md](docs/security.md), and [docs/releases.md](docs/releases.md).
 
 ## Development
 
@@ -99,7 +99,13 @@ See [docs/reliability.md](docs/reliability.md) and [docs/security.md](docs/secur
 make verify
 ```
 
-The repository is tested with the race detector, dedicated bounded fuzz jobs, `go vet`, and multiple Go toolchain lines in CI.
+Run the real PostgreSQL suite when Docker or a disposable PostgreSQL database is available:
+
+```bash
+make test-postgres-integration
+```
+
+The repository is tested with the race detector, real-container PostgreSQL concurrency tests, dedicated bounded fuzz jobs, `go vet`, CodeQL, vulnerability scanning, and multiple pinned Go toolchain lines in CI. Release artifacts include checksums, an SPDX SBOM, signed provenance, and a signed release tag.
 
 ## License
 
