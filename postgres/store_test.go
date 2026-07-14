@@ -213,7 +213,7 @@ func TestSchemaValidationAndQualification(t *testing.T) {
 			t.Fatalf("query was not schema-qualified: %s", query)
 		}
 	}
-	for _, schema := range []string{" leading", "trailing ", "1schema", "bad\x00schema", strings.Repeat("x", 64)} {
+	for _, schema := range []string{" leading", "trailing ", "1schema", "bad\x00schema", "pg_catalog", "PG_temp_7", "information_schema", strings.Repeat("x", 64)} {
 		if _, err := normalizeSchema(schema); err == nil {
 			t.Fatalf("invalid schema %q was accepted", schema)
 		}

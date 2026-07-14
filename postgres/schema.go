@@ -38,6 +38,10 @@ func normalizeSchema(schema string) (string, error) {
 	if strings.TrimSpace(schema) != schema || schema == "" {
 		return "", hookbound.NewError(hookbound.CodeInvalidConfiguration, "PostgreSQL schema cannot be empty or surrounded by whitespace", nil)
 	}
+	lower := strings.ToLower(schema)
+	if strings.HasPrefix(lower, "pg_") || lower == "information_schema" {
+		return "", hookbound.NewError(hookbound.CodeInvalidConfiguration, "PostgreSQL system schemas cannot be used by Hookbound", nil)
+	}
 	return schema, nil
 }
 
