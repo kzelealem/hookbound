@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kzelealem/hookbound"
 	hookboundpg "github.com/kzelealem/hookbound/postgres"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 var integrationDatabaseURL string
