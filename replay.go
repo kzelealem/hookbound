@@ -10,6 +10,7 @@ import (
 // means the message was already accepted.
 type ReplayGuard interface {
 	Claim(context.Context, string, string, time.Time) (claimed bool, err error)
+	Release(context.Context, string, string) error
 }
 
 // MemoryReplayGuard is a bounded-process replay guard for single-instance or
@@ -54,4 +55,15 @@ func (g *MemoryReplayGuard) Claim(_ context.Context, source, id string, expiresA
 	}
 	g.entries[key] = expiresAt
 	return true, nil
+}
+
+// Release removes an uncommitted claim so a provider retry can be processed.
+func (g *MemoryReplayGuard) Release(_ context.Context, source, id string) error {
+	if g == nil {
+		return NewError(CodeInvalidConfiguration, "memory replay guard is nil", nil)
+	}
+	g.mu.Lock()
+	delete(g.entries, source+"\x00"+id)
+	g.mu.Unlock()
+	return nil
 }

@@ -70,10 +70,10 @@ func TestDurableHeaderRedaction(t *testing.T) {
 	headers.Set("Authorization", "Bearer secret")
 	headers.Set("Cookie", "session=secret")
 	headers.Set("X-Request-ID", "public")
-	if !containsSensitiveHeaders(headers) {
+	if !containsSensitiveHeaders(headers, defaultSensitiveHeaders) {
 		t.Fatal("expected sensitive headers to be detected")
 	}
-	redacted := redactedHeaders(headers)
+	redacted := redactedHeaders(headers, defaultSensitiveHeaders)
 	if redacted.Get("Authorization") != "" || redacted.Get("Cookie") != "" {
 		t.Fatalf("sensitive headers were retained: %#v", redacted)
 	}
@@ -89,5 +89,20 @@ func TestErrorURLQueryRedaction(t *testing.T) {
 	value := truncateError(errors.New("POST https://example.com/hook?token=secret&x=1 failed"), 2048)
 	if strings.Contains(value, "secret") || !strings.Contains(value, "?<redacted>") {
 		t.Fatalf("unexpected redacted error: %q", value)
+	}
+}
+
+func TestResponseBodiesAreOptInAndBounded(t *testing.T) {
+	body := []byte("sensitive-response")
+	if got := boundedBytes(body, 0); got != nil {
+		t.Fatalf("expected response persistence to be disabled, got %q", got)
+	}
+	got := boundedBytes(body, 9)
+	if string(got) != "sensitive" {
+		t.Fatalf("unexpected bounded body: %q", got)
+	}
+	got[0] = 'X'
+	if body[0] != 's' {
+		t.Fatal("bounded body retained mutable source memory")
 	}
 }

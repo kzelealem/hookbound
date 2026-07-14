@@ -111,3 +111,16 @@ func TestErrorCodeNilIsEmpty(t *testing.T) {
 		t.Fatalf("expected empty code for nil error, got %q", code)
 	}
 }
+
+func TestRegistryPreservesTypedHookboundErrors(t *testing.T) {
+	registry := NewRegistry()
+	if err := HandleJSON(registry, "thing.created", func(context.Context, Message[struct{}]) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	err := registry.Handle(context.Background(), VerifiedMessage{
+		ID: "msg_decode", Type: "thing.created", Source: "test", Body: []byte("{"),
+	})
+	if ErrorCode(err) != CodeDecode {
+		t.Fatalf("expected decode error, got %v", err)
+	}
+}

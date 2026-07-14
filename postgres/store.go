@@ -18,17 +18,41 @@ import (
 
 var opaqueEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-type Store struct {
-	db    *sql.DB
-	clock hookbound.Clock
-	ids   hookbound.IDGenerator
+type StoreConfig struct {
+	Clock                hookbound.Clock
+	IDGenerator          hookbound.IDGenerator
+	MaxResponseBodyBytes int
+	SensitiveHeaders     []string
 }
 
+type Store struct {
+	db                   *sql.DB
+	clock                hookbound.Clock
+	ids                  hookbound.IDGenerator
+	maxResponseBodyBytes int
+	sensitiveHeaderNames []string
+}
+
+// NewStore creates a store with safe audit defaults: response bodies are not
+// persisted and common credential headers are removed.
 func NewStore(db *sql.DB, clock hookbound.Clock, ids hookbound.IDGenerator) (*Store, error) {
+	return NewStoreWithConfig(db, StoreConfig{Clock: clock, IDGenerator: ids})
+}
+
+func NewStoreWithConfig(db *sql.DB, config StoreConfig) (*Store, error) {
 	if db == nil {
 		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "PostgreSQL database is required", nil)
 	}
-	return &Store{db: db, clock: clock, ids: ids}, nil
+	if config.MaxResponseBodyBytes < 0 {
+		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "maximum persisted response body cannot be negative", nil)
+	}
+	sensitive := append([]string(nil), defaultSensitiveHeaders...)
+	sensitive = append(sensitive, config.SensitiveHeaders...)
+	return &Store{
+		db: db, clock: config.Clock, ids: config.IDGenerator,
+		maxResponseBodyBytes: config.MaxResponseBodyBytes,
+		sensitiveHeaderNames: sensitive,
+	}, nil
 }
 
 func (s *Store) now() time.Time {
@@ -81,7 +105,7 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, request hookbound.Sen
 	if err := request.Validate(); err != nil {
 		return Publication{}, err
 	}
-	if containsSensitiveHeaders(request.Headers) {
+	if containsSensitiveHeaders(request.Headers, s.sensitiveHeaderNames) {
 		return Publication{}, hookbound.NewError(hookbound.CodeInvalidConfiguration, "durable deliveries cannot persist authorization or cookie headers; configure a runtime authenticator", nil)
 	}
 	if request.ID == "" {
@@ -142,7 +166,7 @@ func (s *Store) Handle(ctx context.Context, message hookbound.VerifiedMessage) e
 	if err := message.Validate(); err != nil {
 		return err
 	}
-	headers, err := json.Marshal(redactedHeaders(message.Headers))
+	headers, err := json.Marshal(redactedHeaders(message.Headers, s.sensitiveHeaderNames))
 	if err != nil {
 		return hookbound.NewError(hookbound.CodeInvalidMessage, "encode receipt headers", err)
 	}
@@ -256,7 +280,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 	now := s.now()
 	result.Outcome = normalizedOutcome(result.Outcome, sendErr)
 	state, nextAttempt := deliveryTransition(now, claimed.Attempt, result, sendErr, retry)
-	responseHeaders, err := json.Marshal(result.ResponseHeader)
+	responseHeaders, err := json.Marshal(redactedHeaders(result.ResponseHeader, s.sensitiveHeaderNames))
 	if err != nil {
 		return hookbound.NewError(hookbound.CodeInternal, "encode response headers", err)
 	}
@@ -277,7 +301,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 			error_code = NULLIF($5, ''), error_detail = NULLIF($6, ''), response_headers = $7::jsonb,
 			response_body = $8, next_attempt_at = $9
 		WHERE id = $10`, now, result.Outcome.String(), result.StatusCode, result.Duration.Nanoseconds(),
-		string(errorCode), errorDetail, responseHeaders, result.ResponseBody, nullTime(nextAttempt), claimed.AttemptID); err != nil {
+		string(errorCode), errorDetail, responseHeaders, boundedBytes(result.ResponseBody, s.maxResponseBodyBytes), nullTime(nextAttempt), claimed.AttemptID); err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "complete webhook attempt", err)
 	}
 	completedAt := any(nil)
@@ -461,8 +485,13 @@ func redactURLQuery(value string) string {
 	})
 }
 
-func containsSensitiveHeaders(headers http.Header) bool {
-	for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
+var defaultSensitiveHeaders = []string{
+	"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie",
+	"X-Api-Key", "Api-Key", "X-Auth-Token",
+}
+
+func containsSensitiveHeaders(headers http.Header, names []string) bool {
+	for _, name := range names {
 		if len(headers.Values(name)) > 0 {
 			return true
 		}
@@ -470,10 +499,20 @@ func containsSensitiveHeaders(headers http.Header) bool {
 	return false
 }
 
-func redactedHeaders(headers http.Header) http.Header {
+func redactedHeaders(headers http.Header, names []string) http.Header {
 	clone := headers.Clone()
-	for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"} {
+	for _, name := range names {
 		clone.Del(name)
 	}
 	return clone
+}
+
+func boundedBytes(value []byte, maximum int) []byte {
+	if maximum <= 0 || len(value) == 0 {
+		return nil
+	}
+	if len(value) > maximum {
+		value = value[:maximum]
+	}
+	return bytes.Clone(value)
 }

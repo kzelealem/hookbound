@@ -126,6 +126,9 @@ func (r *Runtime) runLoop(ctx context.Context, kind string, worker int, work fun
 }
 
 func (r *Runtime) WorkOutboundOnce(ctx context.Context) (bool, error) {
+	if r == nil || r.sender == nil {
+		return false, hookbound.NewError(hookbound.CodeInvalidConfiguration, "outbound sender is not configured", nil)
+	}
 	claimed, err := r.store.ClaimDelivery(ctx, r.lease)
 	if err != nil || claimed == nil {
 		return false, err

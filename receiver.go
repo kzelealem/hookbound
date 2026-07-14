@@ -128,6 +128,11 @@ func (r *Receiver) ServeHTTP(writer http.ResponseWriter, request *http.Request) 
 		}
 	}
 	if err := r.handler.Handle(request.Context(), message); err != nil {
+		if r.replayGuard != nil {
+			if releaseErr := r.replayGuard.Release(request.Context(), message.Source, message.ID); releaseErr != nil {
+				err = errors.Join(err, NewError(CodeReplay, "release failed replay claim", releaseErr))
+			}
+		}
 		r.respondError(writer, request, err)
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/hookbound/hookbound"
 	"github.com/hookbound/hookbound/standard"
@@ -41,5 +42,12 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("POST /webhooks", receiver)
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	server := &http.Server{
+		Addr: ":8080", Handler: mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }

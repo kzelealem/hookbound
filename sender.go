@@ -17,10 +17,13 @@ const defaultUserAgent = "hookbound-go/0.1"
 
 // SenderConfig configures one-attempt outbound delivery.
 type SenderConfig struct {
-	Signer           Signer
-	Authenticator    Authenticator
-	NetworkPolicy    transport.Policy
-	HTTPClient       *http.Client
+	Signer        Signer
+	Authenticator Authenticator
+	NetworkPolicy transport.Policy
+	// UnsafeHTTPClient bypasses Hookbound's DNS/IP dial enforcement. Prefer
+	// NetworkPolicy. This escape hatch is intended for trusted, application-
+	// controlled destinations and specialized test transports only.
+	UnsafeHTTPClient *http.Client
 	Clock            Clock
 	IDGenerator      IDGenerator
 	Classifier       Classifier
@@ -46,7 +49,7 @@ func NewSender(config SenderConfig) (*Sender, error) {
 	if config.Signer == nil {
 		return nil, NewError(CodeInvalidConfiguration, "signer is required", nil)
 	}
-	client := config.HTTPClient
+	client := config.UnsafeHTTPClient
 	if client == nil {
 		client = transport.NewClient(config.NetworkPolicy)
 	} else if client.CheckRedirect == nil {

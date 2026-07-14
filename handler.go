@@ -3,6 +3,7 @@ package hookbound
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -74,6 +75,10 @@ func (r *Registry) Handle(ctx context.Context, message VerifiedMessage) error {
 		return NewError(CodeUnknownEvent, fmt.Sprintf("no handler for event type %q", message.Type), nil)
 	}
 	if err := handler.Handle(ctx, message.Clone()); err != nil {
+		var hookboundError *Error
+		if errors.As(err, &hookboundError) {
+			return err
+		}
 		return NewError(CodeHandler, "handle webhook", err)
 	}
 	return nil

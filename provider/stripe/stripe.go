@@ -39,8 +39,12 @@ func (v *Verifier) Verify(ctx context.Context, input hookbound.VerifyInput) (hoo
 	if err != nil {
 		return hookbound.Verification{}, err
 	}
+	receivedAt := input.ReceivedAt
+	if receivedAt.IsZero() {
+		receivedAt = time.Now()
+	}
 	if v.Tolerance > 0 {
-		delta := input.ReceivedAt.Sub(timestamp)
+		delta := receivedAt.Sub(timestamp)
 		if delta < 0 {
 			delta = -delta
 		}
