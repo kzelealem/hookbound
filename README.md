@@ -4,7 +4,7 @@
 
 Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks, receives and verifies third-party events, and provides an optional durable PostgreSQL runtime without forcing applications to deploy a separate webhook platform.
 
-> Status: `v0.1` foundation. The public API is intentionally small, but may evolve before `v1.0.0`.
+> Status: `v0.1.0` foundation. The public API is intentionally small, but may evolve before `v1.0.0`.
 
 ## Design goals
 
@@ -15,23 +15,35 @@ Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks
 - Explicit durability: PostgreSQL persistence is optional and queue semantics never leak into webhook semantics.
 - Standards first: Standard Webhooks HMAC-SHA256 and Ed25519 profiles, including key rotation.
 
+## Install
+
+```bash
+go get github.com/hookbound/hookbound@v0.1.0
+```
+
 ## Receive a webhook
 
 ```go
-registry := hookbound.NewRegistry()
-hookbound.HandleJSON(registry, "invoice.paid", func(ctx context.Context, message hookbound.Message[InvoicePaid]) error {
-    return invoices.MarkPaid(ctx, message.Data.InvoiceID)
-})
+keys, err := standard.StaticHMACKeys(os.Getenv("HOOKBOUND_SECRET"))
+if err != nil {
+    return err
+}
+verifier, err := standard.NewHMACVerifier(keys)
+if err != nil {
+    return err
+}
 
+registry := hookbound.NewRegistry()
+if err := hookbound.HandleJSON(registry, "invoice.paid.v1", handleInvoicePaid); err != nil {
+    return err
+}
 receiver, err := hookbound.NewReceiver(hookbound.ReceiverConfig{
-    Verifier: standard.NewHMACVerifier(
-        standard.StaticHMACKeys(secret),
-        standard.WithTolerance(5*time.Minute),
-    ),
+    Verifier: verifier,
     Handler: registry,
+    ReplayGuard: hookbound.NewMemoryReplayGuard(10_000, nil),
 })
 if err != nil {
-    log.Fatal(err)
+    return err
 }
 
 mux.Handle("POST /webhooks", receiver)
@@ -40,21 +52,23 @@ mux.Handle("POST /webhooks", receiver)
 ## Send a webhook
 
 ```go
-sender, err := hookbound.NewSender(hookbound.SenderConfig{
-    Signer: standard.NewHMACSigner(secret),
-})
+signer, err := standard.NewHMACSigner(keys)
 if err != nil {
-    log.Fatal(err)
+    return err
+}
+sender, err := hookbound.NewSender(hookbound.SenderConfig{Signer: signer})
+if err != nil {
+    return err
 }
 
 result, err := sender.Send(ctx, hookbound.SendRequest{
     URL:       "https://customer.example/webhooks",
-    EventType: "invoice.paid",
+    EventType: "invoice.paid.v1",
     Body:      payload,
 })
 ```
 
-A direct send performs exactly one HTTP request. Use `postgres.Runtime` for durable attempts, retry scheduling, inbox deduplication, and crash recovery.
+A direct send performs exactly one HTTP request. Use `postgres.Runtime` for durable attempts, retry scheduling, inbox deduplication, and crash recovery. See the [quickstart](docs/quickstart.md) and [PostgreSQL guide](docs/postgres.md).
 
 ## Packages
 
