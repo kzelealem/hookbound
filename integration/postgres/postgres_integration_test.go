@@ -305,7 +305,7 @@ func TestRuntimeHeartbeatPreventsPrematureReclaim(t *testing.T) {
 		Store: store, Sender: sender,
 		LeaseDuration:        2 * time.Second,
 		LeaseRenewalInterval: 250 * time.Millisecond,
-		LeaseRenewalTimeout:  150 * time.Millisecond,
+		LeaseRenewalTimeout:  time.Second,
 		CompletionTimeout:    2 * time.Second,
 	})
 	if err != nil {

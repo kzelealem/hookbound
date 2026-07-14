@@ -5,6 +5,7 @@ All notable changes to Hookbound will be documented here. The project follows Se
 ## Unreleased
 
 - Replaced the retired `lib/pq` PostgreSQL integration-test driver with the actively maintained `pgx/v5` `database/sql` adapter.
+- Made the lease-heartbeat integration test tolerate normal cold-runner database latency without weakening its reclaim-safety assertion.
 - Corrected the canonical module path and release target to `github.com/kzelealem/hookbound` so Go tooling can resolve the public repository.
 - Added registry, release, license, and package-discovery metadata for the first valid public Go module release.
 - Made in-memory replay claims commit-aware so concurrent duplicates cannot be acknowledged before the active handler succeeds.
