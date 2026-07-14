@@ -68,7 +68,7 @@ func MigrateWithConfig(ctx context.Context, db *sql.DB, config MigrationConfig) 
 	if err != nil {
 		return fmt.Errorf("hookbound postgres: begin migrations: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))`, "hookbound:migrations:"+schema); err != nil {
 		return fmt.Errorf("hookbound postgres: lock migrations: %w", err)
 	}

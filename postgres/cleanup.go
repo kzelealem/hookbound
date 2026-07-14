@@ -35,7 +35,7 @@ func (s *Store) Cleanup(ctx context.Context, policy RetentionPolicy) (CleanupRes
 	if err != nil {
 		return CleanupResult{}, hookbound.NewError(hookbound.CodePersistence, "begin webhook retention cleanup", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now, err := s.authoritativeNow(ctx, tx)
 	if err != nil {
 		return CleanupResult{}, err

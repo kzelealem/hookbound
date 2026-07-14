@@ -122,7 +122,7 @@ func (s *Store) EnqueueWithOptions(ctx context.Context, request hookbound.SendRe
 	if err != nil {
 		return Publication{}, hookbound.NewError(hookbound.CodePersistence, "begin enqueue transaction", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	publication, err := s.EnqueueTxWithOptions(ctx, tx, request, options)
 	if err != nil {
 		return Publication{}, err
@@ -384,7 +384,7 @@ func (s *Store) ClaimDelivery(ctx context.Context, lease time.Duration) (*Claime
 	if err != nil {
 		return nil, hookbound.NewError(hookbound.CodePersistence, "begin delivery claim", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now, err := s.authoritativeNow(ctx, tx)
 	if err != nil {
 		return nil, err
@@ -521,7 +521,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "begin delivery completion", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now, err := s.authoritativeNow(ctx, tx)
 	if err != nil {
 		return err
@@ -582,7 +582,7 @@ func (s *Store) ClaimReceipt(ctx context.Context, lease time.Duration) (*Claimed
 	if err != nil {
 		return nil, hookbound.NewError(hookbound.CodePersistence, "begin receipt claim", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now, err := s.authoritativeNow(ctx, tx)
 	if err != nil {
 		return nil, err
