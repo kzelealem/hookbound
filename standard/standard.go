@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 const (
@@ -75,9 +75,7 @@ func StaticHMACKeys(secrets ...string) (HMACKeyProvider, error) {
 
 func ParseHMACSecret(value string) ([]byte, error) {
 	encoded := strings.TrimSpace(value)
-	if strings.HasPrefix(encoded, HMACSecretPrefix) {
-		encoded = strings.TrimPrefix(encoded, HMACSecretPrefix)
-	}
+	encoded = strings.TrimPrefix(encoded, HMACSecretPrefix)
 	key, err := decodeBase64(encoded)
 	if err != nil {
 		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "decode Standard Webhooks HMAC key", err)

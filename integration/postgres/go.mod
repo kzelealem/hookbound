@@ -1,10 +1,10 @@
-module github.com/hookbound/hookbound/integration/postgres
+module github.com/kzelealem/hookbound/integration/postgres
 
 go 1.23.0
 
 require (
-	github.com/hookbound/hookbound v0.0.0
+	github.com/kzelealem/hookbound v0.0.0
 	github.com/lib/pq v1.10.9
 )
 
-replace github.com/hookbound/hookbound => ../..
+replace github.com/kzelealem/hookbound => ../..

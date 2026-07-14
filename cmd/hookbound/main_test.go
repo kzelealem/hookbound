@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hookbound/hookbound/standard"
+	"github.com/kzelealem/hookbound/standard"
 )
 
 func TestGenerateSecret(t *testing.T) {

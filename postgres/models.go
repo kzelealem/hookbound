@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 type DeliveryState string

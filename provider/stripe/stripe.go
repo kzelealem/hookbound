@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 const HeaderSignature = "Stripe-Signature"

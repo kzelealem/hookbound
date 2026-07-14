@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/hookbound/hookbound"
-	"github.com/hookbound/hookbound/standard"
+	"github.com/kzelealem/hookbound"
+	"github.com/kzelealem/hookbound/standard"
 )
 
 func main() {

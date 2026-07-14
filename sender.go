@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hookbound/hookbound/transport"
+	"github.com/kzelealem/hookbound/transport"
 )
 
 const defaultUserAgent = "hookbound-go/0.1"

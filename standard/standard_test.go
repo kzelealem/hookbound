@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 func TestHMACSignAndVerify(t *testing.T) {

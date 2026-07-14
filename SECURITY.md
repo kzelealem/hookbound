@@ -1,8 +1,19 @@
 # Security policy
 
-Do not report vulnerabilities in public issues. Until a dedicated security mailbox is published, use GitHub's private vulnerability reporting feature for the repository.
+## Supported versions
 
-Supported releases receive security fixes on the latest minor line. Consumers should compile Hookbound with a currently supported Go toolchain because standard-library security fixes ship with Go releases.
+Hookbound is pre-1.0. Security fixes are released on the latest minor line only. Use the newest Hookbound release and a Go toolchain currently supported by the Go project.
+
+| Version | Supported |
+| --- | --- |
+| Latest `v0.x` | Yes |
+| Older releases | No |
+
+## Reporting a vulnerability
+
+Do not report vulnerabilities in public issues. Use GitHub's private vulnerability reporting feature for the repository. Include the affected version, impact, and a minimal reproduction without real credentials or customer payloads.
+
+Consumers should compile Hookbound with a currently supported Go toolchain because standard-library security fixes ship with Go releases.
 
 Security-sensitive areas include signature parsing, replay protection, URL validation, DNS resolution, redirects, authentication headers, body limits, and durable deduplication.
 
