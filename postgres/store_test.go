@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hookbound/hookbound"
 )
@@ -104,5 +105,67 @@ func TestResponseBodiesAreOptInAndBounded(t *testing.T) {
 	got[0] = 'X'
 	if body[0] != 's' {
 		t.Fatal("bounded body retained mutable source memory")
+	}
+}
+
+func TestReceiptTransitionDoesNotRetryPermanentHandlerErrors(t *testing.T) {
+	now := time.Unix(100, 0)
+	policy := hookbound.RetryPolicy{Schedule: []time.Duration{time.Minute}, MaxAttempts: 3, Jitter: noJitter{}}
+	for _, code := range []hookbound.Code{
+		hookbound.CodeInvalidConfiguration,
+		hookbound.CodeInvalidMessage,
+		hookbound.CodeDecode,
+		hookbound.CodeUnknownEvent,
+	} {
+		state, next := receiptTransition(now, 1, hookbound.NewError(code, "permanent", nil), policy)
+		if state != ReceiptFailed || !next.IsZero() {
+			t.Fatalf("code %s was retried: state=%s next=%s", code, state, next)
+		}
+	}
+	state, next := receiptTransition(now, 1, hookbound.NewError(hookbound.CodeHandler, "temporary", nil), policy)
+	if state != ReceiptRetry || !next.Equal(now.Add(time.Minute)) {
+		t.Fatalf("transient handler error was not retried: state=%s next=%s", state, next)
+	}
+}
+
+func TestDeliveryTransitionNeverRetriesEarlierThanLocalBackoff(t *testing.T) {
+	now := time.Unix(100, 0)
+	policy := hookbound.RetryPolicy{Schedule: []time.Duration{time.Minute}, MaxAttempts: 2, Jitter: noJitter{}}
+	state, next := deliveryTransition(now, 1, hookbound.AttemptResult{
+		Outcome: hookbound.OutcomeRetry,
+		RetryAt: now.Add(time.Second),
+	}, nil, policy)
+	if state != DeliveryRetry || !next.Equal(now.Add(time.Minute)) {
+		t.Fatalf("remote Retry-After shortened local backoff: state=%s next=%s", state, next)
+	}
+}
+
+func TestDurableRedactionRemovesReplayableSignatureHeaders(t *testing.T) {
+	headers := http.Header{
+		"Webhook-Signature":      {"v1,secret"},
+		"Stripe-Signature":       {"t=1,v1=secret"},
+		"X-Hub-Signature-256":    {"sha256=secret"},
+		"X-Non-Sensitive-Header": {"safe"},
+	}
+	redacted := redactedHeaders(headers, defaultSensitiveHeaders)
+	for _, name := range []string{"Webhook-Signature", "Stripe-Signature", "X-Hub-Signature-256"} {
+		if redacted.Get(name) != "" {
+			t.Fatalf("signature header %s was retained", name)
+		}
+	}
+	if redacted.Get("X-Non-Sensitive-Header") != "safe" {
+		t.Fatal("non-sensitive header was removed")
+	}
+}
+
+func TestErrorDetailsAreOptInAndUTF8Safe(t *testing.T) {
+	store := &Store{}
+	if got := store.errorDetail(errors.New("secret diagnostic")); got != "" {
+		t.Fatalf("error details should be disabled by default: %q", got)
+	}
+	store.persistErrorDetails = true
+	got := truncateError(errors.New(strings.Repeat("é", 2000)), 2047)
+	if !utf8.ValidString(got) || len(got) > 2047 {
+		t.Fatalf("truncated error is not valid bounded UTF-8: len=%d", len(got))
 	}
 }

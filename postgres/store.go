@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hookbound/hookbound"
 )
@@ -23,6 +24,7 @@ type StoreConfig struct {
 	IDGenerator          hookbound.IDGenerator
 	MaxResponseBodyBytes int
 	SensitiveHeaders     []string
+	PersistErrorDetails  bool
 }
 
 type Store struct {
@@ -31,6 +33,7 @@ type Store struct {
 	ids                  hookbound.IDGenerator
 	maxResponseBodyBytes int
 	sensitiveHeaderNames []string
+	persistErrorDetails  bool
 }
 
 // NewStore creates a store with safe audit defaults: response bodies are not
@@ -52,6 +55,7 @@ func NewStoreWithConfig(db *sql.DB, config StoreConfig) (*Store, error) {
 		db: db, clock: config.Clock, ids: config.IDGenerator,
 		maxResponseBodyBytes: config.MaxResponseBodyBytes,
 		sensitiveHeaderNames: sensitive,
+		persistErrorDetails:  config.PersistErrorDetails,
 	}, nil
 }
 
@@ -288,21 +292,31 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 	if errorCode == "" && sendErr != nil {
 		errorCode = hookbound.ErrorCode(sendErr)
 	}
-	errorDetail := truncateError(sendErr, 2048)
+	errorDetail := s.errorDetail(sendErr)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "begin delivery completion", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `
+	attemptResult, err := tx.ExecContext(ctx, `
 		UPDATE hookbound_attempts
 		SET finished_at = $1, outcome = $2, status_code = NULLIF($3, 0), duration_ns = $4,
 			error_code = NULLIF($5, ''), error_detail = NULLIF($6, ''), response_headers = $7::jsonb,
 			response_body = $8, next_attempt_at = $9
-		WHERE id = $10`, now, result.Outcome.String(), result.StatusCode, result.Duration.Nanoseconds(),
-		string(errorCode), errorDetail, responseHeaders, boundedBytes(result.ResponseBody, s.maxResponseBodyBytes), nullTime(nextAttempt), claimed.AttemptID); err != nil {
+		WHERE id = $10 AND delivery_id = $11 AND attempt_number = $12 AND finished_at IS NULL`,
+		now, result.Outcome.String(), result.StatusCode, result.Duration.Nanoseconds(), string(errorCode), errorDetail,
+		responseHeaders, boundedBytes(result.ResponseBody, s.maxResponseBodyBytes), nullTime(nextAttempt),
+		claimed.AttemptID, claimed.DeliveryID, claimed.Attempt)
+	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "complete webhook attempt", err)
+	}
+	attemptRows, err := attemptResult.RowsAffected()
+	if err != nil {
+		return hookbound.NewError(hookbound.CodePersistence, "inspect webhook attempt completion", err)
+	}
+	if attemptRows != 1 {
+		return hookbound.NewError(hookbound.CodeConflict, "webhook attempt was already completed or did not match its delivery", nil)
 	}
 	completedAt := any(nil)
 	if state == DeliveryDelivered || state == DeliveryPermanentFailure || state == DeliveryDisabled || state == DeliveryExhausted {
@@ -386,15 +400,7 @@ func (s *Store) CompleteReceipt(ctx context.Context, claimed *ClaimedReceipt, ha
 		return hookbound.NewError(hookbound.CodeInvalidConfiguration, "claimed receipt is required", nil)
 	}
 	now := s.now()
-	state := ReceiptProcessed
-	var next time.Time
-	if handlerErr != nil {
-		if candidate, ok := retry.Next(now, claimed.Attempt); ok {
-			state, next = ReceiptRetry, candidate
-		} else {
-			state = ReceiptExhausted
-		}
-	}
+	state, next := receiptTransition(now, claimed.Attempt, handlerErr, retry)
 	processedAt := any(nil)
 	if state == ReceiptProcessed || state == ReceiptFailed || state == ReceiptExhausted {
 		processedAt = now
@@ -405,7 +411,7 @@ func (s *Store) CompleteReceipt(ctx context.Context, claimed *ClaimedReceipt, ha
 			last_error_code = NULLIF($3, ''), last_error_detail = NULLIF($4, ''),
 			processed_at = $5, updated_at = $6
 		WHERE source = $7 AND message_id = $8 AND state = 'processing' AND attempt_count = $9`,
-		state, nullTime(next), string(hookbound.ErrorCode(handlerErr)), truncateError(handlerErr, 2048),
+		state, nullTime(next), string(hookbound.ErrorCode(handlerErr)), s.errorDetail(handlerErr),
 		processedAt, now, claimed.Message.Source, claimed.Message.ID, claimed.Attempt)
 	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "complete webhook receipt", err)
@@ -449,11 +455,32 @@ func deliveryTransition(now time.Time, attempt int, result hookbound.AttemptResu
 		if !allowed {
 			return DeliveryExhausted, time.Time{}
 		}
-		if !result.RetryAt.IsZero() && result.RetryAt.After(now) {
+		if !result.RetryAt.IsZero() && result.RetryAt.After(policyNext) {
 			return DeliveryRetry, result.RetryAt
 		}
 		return DeliveryRetry, policyNext
 	}
+}
+
+func receiptTransition(now time.Time, attempt int, handlerErr error, retry hookbound.RetryPolicy) (ReceiptState, time.Time) {
+	if handlerErr == nil {
+		return ReceiptProcessed, time.Time{}
+	}
+	switch hookbound.ErrorCode(handlerErr) {
+	case hookbound.CodeInvalidConfiguration, hookbound.CodeInvalidMessage, hookbound.CodeDecode, hookbound.CodeUnknownEvent:
+		return ReceiptFailed, time.Time{}
+	}
+	if next, ok := retry.Next(now, attempt); ok {
+		return ReceiptRetry, next
+	}
+	return ReceiptExhausted, time.Time{}
+}
+
+func (s *Store) errorDetail(err error) string {
+	if !s.persistErrorDetails {
+		return ""
+	}
+	return truncateError(err, 2048)
 }
 
 func nullTime(value time.Time) any {
@@ -471,7 +498,11 @@ func truncateError(err error, maximum int) string {
 	if len(value) <= maximum {
 		return value
 	}
-	return value[:maximum]
+	value = value[:maximum]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 var urlWithQuery = regexp.MustCompile(`https?://[^\s"']+\?[^\s"']*`)
@@ -488,6 +519,7 @@ func redactURLQuery(value string) string {
 var defaultSensitiveHeaders = []string{
 	"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie",
 	"X-Api-Key", "Api-Key", "X-Auth-Token",
+	"Webhook-Signature", "Stripe-Signature", "X-Hub-Signature-256",
 }
 
 func containsSensitiveHeaders(headers http.Header, names []string) bool {

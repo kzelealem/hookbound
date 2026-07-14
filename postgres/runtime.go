@@ -11,15 +11,16 @@ import (
 )
 
 type RuntimeConfig struct {
-	Store           *Store
-	Sender          *hookbound.Sender
-	InboundHandler  hookbound.Handler
-	RetryPolicy     hookbound.RetryPolicy
-	LeaseDuration   time.Duration
-	PollInterval    time.Duration
-	OutboundWorkers int
-	InboundWorkers  int
-	Logger          *slog.Logger
+	Store             *Store
+	Sender            *hookbound.Sender
+	InboundHandler    hookbound.Handler
+	RetryPolicy       hookbound.RetryPolicy
+	LeaseDuration     time.Duration
+	PollInterval      time.Duration
+	CompletionTimeout time.Duration
+	OutboundWorkers   int
+	InboundWorkers    int
+	Logger            *slog.Logger
 }
 
 // Runtime coordinates durable inbox and outbox workers. NewRuntime starts no
@@ -31,6 +32,7 @@ type Runtime struct {
 	retry         hookbound.RetryPolicy
 	lease         time.Duration
 	poll          time.Duration
+	completion    time.Duration
 	outboundCount int
 	inboundCount  int
 	logger        *slog.Logger
@@ -55,6 +57,9 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	if config.PollInterval <= 0 {
 		config.PollInterval = 250 * time.Millisecond
 	}
+	if config.CompletionTimeout <= 0 {
+		config.CompletionTimeout = 10 * time.Second
+	}
 	if config.OutboundWorkers < 0 || config.InboundWorkers < 0 {
 		return nil, hookbound.NewError(hookbound.CodeInvalidConfiguration, "worker counts cannot be negative", nil)
 	}
@@ -69,7 +74,7 @@ func NewRuntime(config RuntimeConfig) (*Runtime, error) {
 	}
 	return &Runtime{
 		store: config.Store, sender: config.Sender, inbound: config.InboundHandler,
-		retry: config.RetryPolicy, lease: config.LeaseDuration, poll: config.PollInterval,
+		retry: config.RetryPolicy, lease: config.LeaseDuration, poll: config.PollInterval, completion: config.CompletionTimeout,
 		outboundCount: config.OutboundWorkers, inboundCount: config.InboundWorkers, logger: config.Logger,
 	}, nil
 }
@@ -137,7 +142,9 @@ func (r *Runtime) WorkOutboundOnce(ctx context.Context) (bool, error) {
 		ID: claimed.MessageID, URL: claimed.Destination, EventType: claimed.EventType,
 		Body: claimed.Body, ContentType: claimed.ContentType, Headers: claimed.Headers,
 	})
-	if err := r.store.CompleteDelivery(ctx, claimed, result, sendErr, r.retry); err != nil {
+	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.completion)
+	defer cancel()
+	if err := r.store.CompleteDelivery(completionCtx, claimed, result, sendErr, r.retry); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -152,7 +159,9 @@ func (r *Runtime) WorkInboundOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	handlerErr := r.inbound.Handle(ctx, claimed.Message)
-	if err := r.store.CompleteReceipt(ctx, claimed, handlerErr, r.retry); err != nil {
+	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.completion)
+	defer cancel()
+	if err := r.store.CompleteReceipt(completionCtx, claimed, handlerErr, r.retry); err != nil {
 		return true, err
 	}
 	return true, nil
