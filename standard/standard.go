@@ -272,14 +272,8 @@ func (v *Verifier) Verify(ctx context.Context, input hookbound.VerifyInput) (hoo
 	if receivedAt.IsZero() {
 		receivedAt = time.Now()
 	}
-	if tolerance := v.config.Tolerance; tolerance > 0 {
-		delta := receivedAt.Sub(timestamp)
-		if delta < 0 {
-			delta = -delta
-		}
-		if delta > tolerance {
-			return hookbound.Verification{}, hookbound.NewError(hookbound.CodeExpiredSignature, "webhook timestamp is outside the allowed tolerance", nil)
-		}
+	if tolerance := v.config.Tolerance; tolerance > 0 && outsideTolerance(receivedAt, timestamp, tolerance) {
+		return hookbound.Verification{}, hookbound.NewError(hookbound.CodeExpiredSignature, "webhook timestamp is outside the allowed tolerance", nil)
 	}
 
 	signatureValues := input.Headers.Values(HeaderSignature)
@@ -339,6 +333,9 @@ func (v *Verifier) verifyAny(ctx context.Context, content []byte, signatures []p
 		keys, err := v.config.PublicKeys(ctx)
 		if err != nil {
 			return false, hookbound.NewError(hookbound.CodeInternal, "resolve Ed25519 verification keys", err)
+		}
+		if len(keys) == 0 || len(keys) > 16 {
+			return false, hookbound.NewError(hookbound.CodeInvalidConfiguration, "between one and sixteen Ed25519 public keys are required", nil)
 		}
 		for _, key := range keys {
 			if len(key) != ed25519.PublicKeySize {
@@ -403,6 +400,13 @@ func GenerateEd25519KeyPair(reader io.Reader) (publicKey, privateKey string, err
 		return "", "", err
 	}
 	return publicEncoded, privateEncoded, nil
+}
+
+func outsideTolerance(receivedAt, timestamp time.Time, tolerance time.Duration) bool {
+	if timestamp.After(receivedAt) {
+		return timestamp.Sub(receivedAt) > tolerance
+	}
+	return receivedAt.Sub(timestamp) > tolerance
 }
 
 type parsedSignature struct {

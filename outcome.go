@@ -95,11 +95,10 @@ func (c DefaultClassifier) retryAfter(now time.Time, value string) time.Time {
 		maximum = 24 * time.Hour
 	}
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		delay := time.Duration(seconds) * time.Second
-		if delay > maximum {
-			delay = maximum
+		if seconds > int64(maximum/time.Second) {
+			return now.Add(maximum)
 		}
-		return now.Add(delay)
+		return now.Add(time.Duration(seconds) * time.Second)
 	}
 	if parsed, err := http.ParseTime(value); err == nil && parsed.After(now) {
 		if parsed.Sub(now) > maximum {

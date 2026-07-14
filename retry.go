@@ -23,7 +23,7 @@ func (CryptoJitter) Duration(max time.Duration) time.Duration {
 		return max / 2
 	}
 	value := binary.LittleEndian.Uint64(bytes[:])
-	return time.Duration(value % uint64(max+1))
+	return time.Duration(value % (uint64(max) + 1))
 }
 
 // RetryPolicy calculates the next automatic attempt. Attempt is one-based and
@@ -78,5 +78,16 @@ func (p RetryPolicy) Next(now time.Time, attempt int) (time.Time, bool) {
 	if jitter == nil {
 		jitter = CryptoJitter{}
 	}
-	return now.Add(delay + jitter.Duration(delay/5)), true
+	maximumJitter := delay / 5
+	jitterDelay := jitter.Duration(maximumJitter)
+	if jitterDelay < 0 {
+		jitterDelay = 0
+	}
+	if jitterDelay > maximumJitter {
+		jitterDelay = maximumJitter
+	}
+	if delay > time.Duration(math.MaxInt64)-jitterDelay {
+		return time.Time{}, false
+	}
+	return now.Add(delay + jitterDelay), true
 }

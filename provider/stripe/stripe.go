@@ -31,6 +31,12 @@ func NewVerifier(secret hookbound.SecretProvider) (*Verifier, error) {
 }
 
 func (v *Verifier) Verify(ctx context.Context, input hookbound.VerifyInput) (hookbound.Verification, error) {
+	if v == nil || v.Secret == nil {
+		return hookbound.Verification{}, hookbound.NewError(hookbound.CodeInvalidConfiguration, "Stripe verifier is not configured", nil)
+	}
+	if v.Tolerance < 0 {
+		return hookbound.Verification{}, hookbound.NewError(hookbound.CodeInvalidConfiguration, "Stripe signature tolerance cannot be negative", nil)
+	}
 	values := input.Headers.Values(HeaderSignature)
 	if len(values) != 1 {
 		return hookbound.Verification{}, hookbound.NewError(hookbound.CodeInvalidSignature, "exactly one Stripe-Signature header is required", nil)
@@ -43,14 +49,8 @@ func (v *Verifier) Verify(ctx context.Context, input hookbound.VerifyInput) (hoo
 	if receivedAt.IsZero() {
 		receivedAt = time.Now()
 	}
-	if v.Tolerance > 0 {
-		delta := receivedAt.Sub(timestamp)
-		if delta < 0 {
-			delta = -delta
-		}
-		if delta > v.Tolerance {
-			return hookbound.Verification{}, hookbound.NewError(hookbound.CodeExpiredSignature, "Stripe signature timestamp is outside the allowed tolerance", nil)
-		}
+	if v.Tolerance > 0 && outsideTolerance(receivedAt, timestamp, v.Tolerance) {
+		return hookbound.Verification{}, hookbound.NewError(hookbound.CodeExpiredSignature, "Stripe signature timestamp is outside the allowed tolerance", nil)
 	}
 	secret, err := v.Secret.Secret(ctx)
 	if err != nil || secret == "" {
@@ -85,21 +85,40 @@ func (v *Verifier) Verify(ctx context.Context, input hookbound.VerifyInput) (hoo
 	return hookbound.Verification{ID: envelope.ID, Type: envelope.Type, Source: "stripe", Timestamp: timestamp}, nil
 }
 
+func outsideTolerance(receivedAt, timestamp time.Time, tolerance time.Duration) bool {
+	if timestamp.After(receivedAt) {
+		return timestamp.Sub(receivedAt) > tolerance
+	}
+	return receivedAt.Sub(timestamp) > tolerance
+}
+
 func parseHeader(value string) (time.Time, [][]byte, error) {
+	if len(value) > 8<<10 {
+		return time.Time{}, nil, hookbound.NewError(hookbound.CodeInvalidSignature, "Stripe signature header is too large", nil)
+	}
 	var timestamp time.Time
+	var timestampSet bool
 	var signatures [][]byte
-	for _, component := range strings.Split(value, ",") {
+	components := strings.Split(value, ",")
+	if len(components) > 64 {
+		return time.Time{}, nil, hookbound.NewError(hookbound.CodeInvalidSignature, "Stripe signature header has too many components", nil)
+	}
+	for _, component := range components {
 		key, raw, found := strings.Cut(strings.TrimSpace(component), "=")
 		if !found {
 			continue
 		}
 		switch key {
 		case "t":
+			if timestampSet {
+				return time.Time{}, nil, hookbound.NewError(hookbound.CodeInvalidSignature, "Stripe signature header has multiple timestamps", nil)
+			}
 			seconds, err := strconv.ParseInt(raw, 10, 64)
 			if err != nil {
 				return time.Time{}, nil, hookbound.NewError(hookbound.CodeInvalidSignature, "invalid Stripe timestamp", err)
 			}
 			timestamp = time.Unix(seconds, 0)
+			timestampSet = true
 		case "v1":
 			decoded, err := hex.DecodeString(raw)
 			if err != nil {

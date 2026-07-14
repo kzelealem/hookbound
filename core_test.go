@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -122,5 +123,42 @@ func TestRegistryPreservesTypedHookboundErrors(t *testing.T) {
 	})
 	if ErrorCode(err) != CodeDecode {
 		t.Fatalf("expected decode error, got %v", err)
+	}
+}
+
+type unboundedJitter struct{}
+
+func (unboundedJitter) Duration(time.Duration) time.Duration { return time.Duration(math.MaxInt64) }
+
+func TestRetryAfterOverflowIsCapped(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	outcome, retryAt := (DefaultClassifier{MaxRetryAfter: 24 * time.Hour}).Classify(now, &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": {"9223372036854775807"}},
+	}, nil)
+	if outcome != OutcomeRetry || !retryAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("unexpected capped retry: outcome=%s retry_at=%s", outcome, retryAt)
+	}
+}
+
+func TestRetryPolicyBoundsOutOfContractJitter(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	retryAt, ok := (RetryPolicy{
+		Schedule:    []time.Duration{time.Second},
+		MaxAttempts: 2,
+		Jitter:      unboundedJitter{},
+	}).Next(now, 1)
+	if !ok {
+		t.Fatal("expected a retry")
+	}
+	if retryAt.Before(now.Add(time.Second)) || retryAt.After(now.Add(time.Second+200*time.Millisecond)) {
+		t.Fatalf("jitter escaped the documented range: %s", retryAt)
+	}
+}
+
+func TestCryptoJitterHandlesMaximumDuration(t *testing.T) {
+	got := (CryptoJitter{}).Duration(time.Duration(math.MaxInt64))
+	if got < 0 {
+		t.Fatalf("maximum jitter became negative: %s", got)
 	}
 }

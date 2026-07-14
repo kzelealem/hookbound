@@ -178,3 +178,45 @@ func FuzzSignatureParser(f *testing.F) {
 		_, _ = parseSignatures(value)
 	})
 }
+
+func TestVerifierRejectsFarFutureTimestampWithoutDurationOverflow(t *testing.T) {
+	secret, _ := EncodeHMACSecret(bytes.Repeat([]byte{1}, 32))
+	keys, _ := StaticHMACKeys(secret)
+	signer, _ := NewHMACSigner(keys)
+	verifier, _ := NewVerifier(VerifierConfig{HMACKeys: keys, Tolerance: 5 * time.Minute, AllowNoType: true})
+	future := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	body := []byte(`{}`)
+	headers, err := signer.Sign(context.Background(), hookbound.SignInput{MessageID: "msg_future", Timestamp: future, Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = verifier.Verify(context.Background(), hookbound.VerifyInput{
+		Headers:    headers,
+		Body:       body,
+		ReceivedAt: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+	})
+	if hookbound.ErrorCode(err) != hookbound.CodeExpiredSignature {
+		t.Fatalf("expected expired signature, got %v", err)
+	}
+}
+
+func TestVerifierRejectsExcessivePublicKeyRotationSet(t *testing.T) {
+	verifier, err := NewVerifier(VerifierConfig{
+		PublicKeys: func(context.Context) ([]ed25519.PublicKey, error) {
+			return make([]ed25519.PublicKey, 17), nil
+		},
+		AllowNoType: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := http.Header{
+		HeaderID:        {"msg_keys"},
+		HeaderTimestamp: {"1000"},
+		HeaderSignature: {"v1a," + base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))},
+	}
+	_, err = verifier.Verify(context.Background(), hookbound.VerifyInput{Headers: headers, Body: []byte(`{}`), ReceivedAt: time.Unix(1000, 0)})
+	if hookbound.ErrorCode(err) != hookbound.CodeInvalidConfiguration {
+		t.Fatalf("expected invalid configuration, got %v", err)
+	}
+}
