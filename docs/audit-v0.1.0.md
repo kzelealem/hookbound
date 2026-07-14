@@ -129,6 +129,7 @@ Without `--type`, `hookbound verify` set `AllowNoType=true`, so a normal signed 
 - Raw error causes are disabled by default; persistence requires the explicit `PersistErrorDetails` opt-in (`ecbb819`).
 - Error truncation preserves valid UTF-8 (`ecbb819`).
 - Worker completion uses a fresh bounded context after cancellation so lease state can still be recorded (`ecbb819`).
+- Panics from durable handlers, custom outbound code, or a worker iteration are converted to coded errors so workers survive and claimed work can be completed or recovered (`72f8997`).
 - Due checks, lease timestamps, and completion timestamps use PostgreSQL's clock by default, avoiding multi-host application-clock skew (`60594e6`).
 - Embedded migrations run in one transaction, serialize concurrent migrators, and record immutable checksums (`4157317`).
 
