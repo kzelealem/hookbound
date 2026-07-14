@@ -156,7 +156,7 @@ func (s *Sender) Send(ctx context.Context, request SendRequest) (AttemptResult, 
 		result.ErrorCode = CodeTransport
 		return result, NewError(CodeTransport, "send webhook", transportErr)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	result.StatusCode = response.StatusCode
 	result.ResponseHeader = safeResponseHeaders(response.Header)
 

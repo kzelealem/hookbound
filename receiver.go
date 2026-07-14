@@ -164,7 +164,7 @@ func readBounded(reader io.ReadCloser, maximum int64) ([]byte, error) {
 	if reader == nil {
 		return nil, nil
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	body, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
 		return nil, NewError(CodeInvalidMessage, "read webhook body", err)

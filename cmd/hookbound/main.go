@@ -194,7 +194,7 @@ func requiredEnvironment(name string) (string, error) {
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, `Hookbound — secure webhooks, both ways.
+	_, _ = fmt.Fprintln(writer, `Hookbound — secure webhooks, both ways.
 
 Usage:
   hookbound version

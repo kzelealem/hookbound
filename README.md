@@ -4,7 +4,6 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/kzelealem/hookbound.svg)](https://pkg.go.dev/github.com/kzelealem/hookbound)
 [![CI](https://github.com/kzelealem/hookbound/actions/workflows/ci.yml/badge.svg)](https://github.com/kzelealem/hookbound/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/kzelealem/hookbound)](https://goreportcard.com/report/github.com/kzelealem/hookbound)
 [![License](https://img.shields.io/github/license/kzelealem/hookbound)](LICENSE)
 
 Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks, receives and verifies third-party events, and provides an optional durable PostgreSQL runtime without forcing applications to deploy a separate webhook platform.

@@ -136,7 +136,7 @@ func ValidateURL(rawURL string, policy Policy) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse URL: %v", ErrUnsafeDestination, err)
 	}
-	if parsed.Scheme != "https" && !(policy.AllowPlainHTTP && parsed.Scheme == "http") {
+	if parsed.Scheme != "https" && (!policy.AllowPlainHTTP || parsed.Scheme != "http") {
 		return nil, fmt.Errorf("%w: scheme %q is not allowed", ErrUnsafeDestination, parsed.Scheme)
 	}
 	if parsed.Hostname() == "" {

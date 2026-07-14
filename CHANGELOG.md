@@ -4,6 +4,7 @@ All notable changes to Hookbound will be documented here. The project follows Se
 
 ## Unreleased
 
+- Replaced the retired Go Report Card badge with maintained golangci-lint v2 enforcement in CI.
 - Replaced the retired `lib/pq` PostgreSQL integration-test driver with the actively maintained `pgx/v5` `database/sql` adapter.
 - Made the lease-heartbeat integration test tolerate normal cold-runner database latency without weakening its reclaim-safety assertion.
 - Corrected the canonical module path and release target to `github.com/kzelealem/hookbound` so Go tooling can resolve the public repository.
