@@ -66,6 +66,21 @@ func (s *Store) now() time.Time {
 	return s.clock.Now().UTC()
 }
 
+type rowQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (s *Store) authoritativeNow(ctx context.Context, queryer rowQuerier) (time.Time, error) {
+	if s.clock != nil {
+		return s.now(), nil
+	}
+	var now time.Time
+	if err := queryer.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return time.Time{}, hookbound.NewError(hookbound.CodePersistence, "read PostgreSQL clock", err)
+	}
+	return now.UTC(), nil
+}
+
 func (s *Store) newMessageID() (string, error) {
 	if s.ids != nil {
 		return s.ids.NewMessageID()
@@ -127,7 +142,10 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, request hookbound.Sen
 	if err != nil {
 		return Publication{}, hookbound.NewError(hookbound.CodeInvalidMessage, "encode delivery headers", err)
 	}
-	createdAt := s.now()
+	createdAt, err := s.authoritativeNow(ctx, tx)
+	if err != nil {
+		return Publication{}, err
+	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO hookbound_messages (id, event_type, body, content_type, created_at)
 		VALUES ($1, $2, $3, $4, $5)
@@ -178,7 +196,10 @@ func (s *Store) Handle(ctx context.Context, message hookbound.VerifiedMessage) e
 	if err != nil {
 		return hookbound.NewError(hookbound.CodeInvalidMessage, "encode receipt metadata", err)
 	}
-	now := s.now()
+	now, err := s.authoritativeNow(ctx, s.db)
+	if err != nil {
+		return err
+	}
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO hookbound_receipts
 			(source, message_id, event_type, event_timestamp, body, content_type, headers, metadata,
@@ -219,7 +240,10 @@ func (s *Store) ClaimDelivery(ctx context.Context, lease time.Duration) (*Claime
 		return nil, hookbound.NewError(hookbound.CodePersistence, "begin delivery claim", err)
 	}
 	defer tx.Rollback()
-	now := s.now()
+	now, err := s.authoritativeNow(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	claimed := &ClaimedDelivery{}
 	var headersJSON []byte
 	var previousState DeliveryState
@@ -281,9 +305,7 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 	if claimed == nil {
 		return hookbound.NewError(hookbound.CodeInvalidConfiguration, "claimed delivery is required", nil)
 	}
-	now := s.now()
 	result.Outcome = normalizedOutcome(result.Outcome, sendErr)
-	state, nextAttempt := deliveryTransition(now, claimed.Attempt, result, sendErr, retry)
 	responseHeaders, err := json.Marshal(redactedHeaders(result.ResponseHeader, s.sensitiveHeaderNames))
 	if err != nil {
 		return hookbound.NewError(hookbound.CodeInternal, "encode response headers", err)
@@ -299,6 +321,11 @@ func (s *Store) CompleteDelivery(ctx context.Context, claimed *ClaimedDelivery, 
 		return hookbound.NewError(hookbound.CodePersistence, "begin delivery completion", err)
 	}
 	defer tx.Rollback()
+	now, err := s.authoritativeNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	state, nextAttempt := deliveryTransition(now, claimed.Attempt, result, sendErr, retry)
 	attemptResult, err := tx.ExecContext(ctx, `
 		UPDATE hookbound_attempts
 		SET finished_at = $1, outcome = $2, status_code = NULLIF($3, 0), duration_ns = $4,
@@ -355,7 +382,10 @@ func (s *Store) ClaimReceipt(ctx context.Context, lease time.Duration) (*Claimed
 		return nil, hookbound.NewError(hookbound.CodePersistence, "begin receipt claim", err)
 	}
 	defer tx.Rollback()
-	now := s.now()
+	now, err := s.authoritativeNow(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	claimed := &ClaimedReceipt{StartedAt: now}
 	var headersJSON, metadataJSON []byte
 	err = tx.QueryRowContext(ctx, `
@@ -399,7 +429,10 @@ func (s *Store) CompleteReceipt(ctx context.Context, claimed *ClaimedReceipt, ha
 	if claimed == nil {
 		return hookbound.NewError(hookbound.CodeInvalidConfiguration, "claimed receipt is required", nil)
 	}
-	now := s.now()
+	now, err := s.authoritativeNow(ctx, s.db)
+	if err != nil {
+		return err
+	}
 	state, next := receiptTransition(now, claimed.Attempt, handlerErr, retry)
 	processedAt := any(nil)
 	if state == ReceiptProcessed || state == ReceiptFailed || state == ReceiptExhausted {
