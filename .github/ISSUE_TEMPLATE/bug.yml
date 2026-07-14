@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: Hookbound and Go versions
-      placeholder: v0.1.0, go1.26.5
+      placeholder: v0.2.0, go1.26.5
     validations:
       required: true
   - type: textarea

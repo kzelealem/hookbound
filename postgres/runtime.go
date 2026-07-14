@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 type RuntimeConfig struct {

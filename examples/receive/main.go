@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/hookbound/hookbound"
-	"github.com/hookbound/hookbound/standard"
+	"github.com/kzelealem/hookbound"
+	"github.com/kzelealem/hookbound/standard"
 )
 
 type invoicePaid struct {

@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 const (

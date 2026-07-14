@@ -2,9 +2,14 @@
 
 **Secure webhooks, both ways.**
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/kzelealem/hookbound.svg)](https://pkg.go.dev/github.com/kzelealem/hookbound)
+[![CI](https://github.com/kzelealem/hookbound/actions/workflows/ci.yml/badge.svg)](https://github.com/kzelealem/hookbound/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kzelealem/hookbound)](https://goreportcard.com/report/github.com/kzelealem/hookbound)
+[![License](https://img.shields.io/github/license/kzelealem/hookbound)](LICENSE)
+
 Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks, receives and verifies third-party events, and provides an optional durable PostgreSQL runtime without forcing applications to deploy a separate webhook platform.
 
-> Status: `v0.1.0` is the first published foundation. The Unreleased line contains the production hardening planned for `v0.2.0`; the public API may still evolve before `v1.0.0`.
+> Status: release candidate for `v0.2.0`. The public API may still evolve before `v1.0.0`; pin an exact version in production.
 
 ## Design goals
 
@@ -18,8 +23,10 @@ Hookbound is a dependency-light webhook runtime for Go. It sends signed webhooks
 ## Install
 
 ```bash
-go get github.com/hookbound/hookbound@v0.1.0
+go get github.com/kzelealem/hookbound@latest
 ```
+
+Go modules are published from Git tags; there is no separate upload step. See the [release guide](docs/releases.md) for the maintainer workflow and registry checks.
 
 ## Receive a webhook
 

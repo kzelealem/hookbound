@@ -4,6 +4,8 @@ All notable changes to Hookbound will be documented here. The project follows Se
 
 ## Unreleased
 
+- Corrected the canonical module path and release target to `github.com/kzelealem/hookbound` so Go tooling can resolve the public repository.
+- Added registry, release, license, and package-discovery metadata for the first valid public Go module release.
 - Made in-memory replay claims commit-aware so concurrent duplicates cannot be acknowledged before the active handler succeeds.
 - Hardened signature tolerance, `Retry-After`, jitter, message IDs, authentication headers, and protocol parser boundaries against overflow and ambiguity.
 - Froze outbound network policies at sender construction and made `AllowAnyPort` and empty port allow-lists unambiguous.

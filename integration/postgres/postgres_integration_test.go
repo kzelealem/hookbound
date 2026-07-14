@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hookbound/hookbound"
-	hookboundpg "github.com/hookbound/hookbound/postgres"
+	"github.com/kzelealem/hookbound"
+	hookboundpg "github.com/kzelealem/hookbound/postgres"
 	_ "github.com/lib/pq"
 )
 

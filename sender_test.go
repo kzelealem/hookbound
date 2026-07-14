@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hookbound/hookbound"
-	"github.com/hookbound/hookbound/standard"
-	"github.com/hookbound/hookbound/transport"
+	"github.com/kzelealem/hookbound"
+	"github.com/kzelealem/hookbound/standard"
+	"github.com/kzelealem/hookbound/transport"
 )
 
 type fixedClock struct{ value time.Time }

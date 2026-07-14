@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 func TestVerifier(t *testing.T) {

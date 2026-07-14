@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 const defaultSchema = "public"

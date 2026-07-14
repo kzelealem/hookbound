@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 const (

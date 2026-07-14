@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-type fixedID string
-
-func (f fixedID) NewMessageID() (string, error) { return string(f), nil }
-
 type fixedJitter time.Duration
 
 func (f fixedJitter) Duration(time.Duration) time.Duration { return time.Duration(f) }

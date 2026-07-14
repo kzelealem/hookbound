@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hookbound/hookbound"
+	"github.com/kzelealem/hookbound"
 )
 
 var opaqueEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
