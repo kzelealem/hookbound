@@ -460,15 +460,15 @@ func (s *Store) RenewDeliveryLease(ctx context.Context, claimed *ClaimedDelivery
 	var err error
 	if s.clock == nil {
 		result, err = s.db.ExecContext(ctx, s.qualifyQuery(`
-			WITH current_time AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS now)
+			WITH db_now AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS now)
 			UPDATE hookbound_deliveries d
-			SET lease_expires_at = current_time.now + ($1::bigint * interval '1 microsecond'),
-				updated_at = current_time.now
-			FROM current_time
+			SET lease_expires_at = db_now.now + ($1::bigint * interval '1 microsecond'),
+				updated_at = db_now.now
+			FROM db_now
 			WHERE d.id = $2
 			  AND d.state = 'in_flight'
 			  AND d.attempt_count = $3
-			  AND d.lease_expires_at > current_time.now
+			  AND d.lease_expires_at > db_now.now
 			  AND EXISTS (
 			      SELECT 1 FROM hookbound_attempts a
 			      WHERE a.id = $4 AND a.delivery_id = d.id
@@ -639,14 +639,14 @@ func (s *Store) RenewReceiptLease(ctx context.Context, claimed *ClaimedReceipt, 
 	var err error
 	if s.clock == nil {
 		result, err = s.db.ExecContext(ctx, s.qualifyQuery(`
-			WITH current_time AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS now)
+			WITH db_now AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS now)
 			UPDATE hookbound_receipts r
-			SET lease_expires_at = current_time.now + ($1::bigint * interval '1 microsecond'),
-				updated_at = current_time.now
-			FROM current_time
+			SET lease_expires_at = db_now.now + ($1::bigint * interval '1 microsecond'),
+				updated_at = db_now.now
+			FROM db_now
 			WHERE r.source = $2 AND r.message_id = $3
 			  AND r.state = 'processing' AND r.attempt_count = $4
-			  AND r.lease_expires_at > current_time.now`),
+			  AND r.lease_expires_at > db_now.now`),
 			durationMicrosecondsCeil(lease), claimed.Message.Source, claimed.Message.ID, claimed.Attempt)
 	} else {
 		now := s.now()
