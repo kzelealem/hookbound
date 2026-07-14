@@ -99,7 +99,7 @@ func MigrateWithConfig(ctx context.Context, db *sql.DB, config MigrationConfig) 
 		switch {
 		case err == nil:
 			if existing != checksum {
-				return fmt.Errorf("hookbound postgres: migration %s checksum changed after application", name)
+				return fmt.Errorf("hookbound postgres: migration %s checksum mismatch: applied migration changed", name)
 			}
 			continue
 		case !errors.Is(err, sql.ErrNoRows):

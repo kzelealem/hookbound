@@ -456,22 +456,39 @@ func (s *Store) RenewDeliveryLease(ctx context.Context, claimed *ClaimedDelivery
 	if lease <= 0 {
 		return hookbound.NewError(hookbound.CodeInvalidConfiguration, "delivery lease duration must be positive", nil)
 	}
-	now, err := s.authoritativeNow(ctx, s.db)
-	if err != nil {
-		return err
+	var result sql.Result
+	var err error
+	if s.clock == nil {
+		result, err = s.db.ExecContext(ctx, s.qualifyQuery(`
+			WITH current_time AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS now)
+			UPDATE hookbound_deliveries d
+			SET lease_expires_at = current_time.now + ($1::bigint * interval '1 microsecond'),
+				updated_at = current_time.now
+			FROM current_time
+			WHERE d.id = $2
+			  AND d.state = 'in_flight'
+			  AND d.attempt_count = $3
+			  AND d.lease_expires_at > current_time.now
+			  AND EXISTS (
+			      SELECT 1 FROM hookbound_attempts a
+			      WHERE a.id = $4 AND a.delivery_id = d.id
+			        AND a.attempt_number = d.attempt_count AND a.finished_at IS NULL
+			  )`), durationMicrosecondsCeil(lease), claimed.DeliveryID, claimed.Attempt, claimed.AttemptID)
+	} else {
+		now := s.now()
+		result, err = s.db.ExecContext(ctx, s.qualifyQuery(`
+			UPDATE hookbound_deliveries d
+			SET lease_expires_at = $1, updated_at = $2
+			WHERE d.id = $3
+			  AND d.state = 'in_flight'
+			  AND d.attempt_count = $4
+			  AND d.lease_expires_at > $2
+			  AND EXISTS (
+			      SELECT 1 FROM hookbound_attempts a
+			      WHERE a.id = $5 AND a.delivery_id = d.id
+			        AND a.attempt_number = d.attempt_count AND a.finished_at IS NULL
+			  )`), now.Add(lease), now, claimed.DeliveryID, claimed.Attempt, claimed.AttemptID)
 	}
-	result, err := s.db.ExecContext(ctx, s.qualifyQuery(`
-		UPDATE hookbound_deliveries d
-		SET lease_expires_at = $1, updated_at = $2
-		WHERE d.id = $3
-		  AND d.state = 'in_flight'
-		  AND d.attempt_count = $4
-		  AND d.lease_expires_at > $2
-		  AND EXISTS (
-		      SELECT 1 FROM hookbound_attempts a
-		      WHERE a.id = $5 AND a.delivery_id = d.id
-		        AND a.attempt_number = d.attempt_count AND a.finished_at IS NULL
-		  )`), now.Add(lease), now, claimed.DeliveryID, claimed.Attempt, claimed.AttemptID)
 	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "renew webhook delivery lease", err)
 	}
@@ -618,17 +635,29 @@ func (s *Store) RenewReceiptLease(ctx context.Context, claimed *ClaimedReceipt, 
 	if lease <= 0 {
 		return hookbound.NewError(hookbound.CodeInvalidConfiguration, "receipt lease duration must be positive", nil)
 	}
-	now, err := s.authoritativeNow(ctx, s.db)
-	if err != nil {
-		return err
+	var result sql.Result
+	var err error
+	if s.clock == nil {
+		result, err = s.db.ExecContext(ctx, s.qualifyQuery(`
+			WITH current_time AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS now)
+			UPDATE hookbound_receipts r
+			SET lease_expires_at = current_time.now + ($1::bigint * interval '1 microsecond'),
+				updated_at = current_time.now
+			FROM current_time
+			WHERE r.source = $2 AND r.message_id = $3
+			  AND r.state = 'processing' AND r.attempt_count = $4
+			  AND r.lease_expires_at > current_time.now`),
+			durationMicrosecondsCeil(lease), claimed.Message.Source, claimed.Message.ID, claimed.Attempt)
+	} else {
+		now := s.now()
+		result, err = s.db.ExecContext(ctx, s.qualifyQuery(`
+			UPDATE hookbound_receipts
+			SET lease_expires_at = $1, updated_at = $2
+			WHERE source = $3 AND message_id = $4
+			  AND state = 'processing' AND attempt_count = $5
+			  AND lease_expires_at > $2`),
+			now.Add(lease), now, claimed.Message.Source, claimed.Message.ID, claimed.Attempt)
 	}
-	result, err := s.db.ExecContext(ctx, s.qualifyQuery(`
-		UPDATE hookbound_receipts
-		SET lease_expires_at = $1, updated_at = $2
-		WHERE source = $3 AND message_id = $4
-		  AND state = 'processing' AND attempt_count = $5
-		  AND lease_expires_at > $2`),
-		now.Add(lease), now, claimed.Message.Source, claimed.Message.ID, claimed.Attempt)
 	if err != nil {
 		return hookbound.NewError(hookbound.CodePersistence, "renew webhook receipt lease", err)
 	}
@@ -674,6 +703,14 @@ func (s *Store) CompleteReceipt(ctx context.Context, claimed *ClaimedReceipt, ha
 		return hookbound.NewError(hookbound.CodeConflict, "receipt lease was lost before completion", nil)
 	}
 	return nil
+}
+
+func durationMicrosecondsCeil(value time.Duration) int64 {
+	microseconds := value / time.Microsecond
+	if value%time.Microsecond != 0 {
+		microseconds++
+	}
+	return int64(microseconds)
 }
 
 func normalizedOutcome(outcome hookbound.Outcome, sendErr error) hookbound.Outcome {

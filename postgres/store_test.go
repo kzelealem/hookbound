@@ -319,3 +319,23 @@ func TestRuntimeRejectsUnsafeLeaseRenewalTiming(t *testing.T) {
 		t.Fatal("unsafe lease renewal timing was accepted")
 	}
 }
+
+func TestDurationMicrosecondsCeil(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		value time.Duration
+		want  int64
+	}{
+		{name: "sub-microsecond", value: time.Nanosecond, want: 1},
+		{name: "exact", value: time.Microsecond, want: 1},
+		{name: "rounded", value: time.Microsecond + time.Nanosecond, want: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := durationMicrosecondsCeil(test.value); got != test.want {
+				t.Fatalf("durationMicrosecondsCeil(%s) = %d, want %d", test.value, got, test.want)
+			}
+		})
+	}
+}
